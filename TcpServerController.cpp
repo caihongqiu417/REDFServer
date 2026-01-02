@@ -67,3 +67,13 @@ void TcpServerController::Stop()
 {
     // 实现停止服务器的逻辑
 }
+
+void TcpServerController::Display()
+{
+    printf("Server Name:%s\n", this->name.c_str());
+    printf("Listening on:[%s,%d]\n",
+           network_convert_ip_n_to_p(this->ip_addr, 0),  // ✓ IP转换
+           ntohs(this->port_no));                        // ✓ 端口转换
+    
+    this->tcp_client_db_mgr->DisplayClientDB();
+}

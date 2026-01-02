@@ -46,19 +46,17 @@ static void appln_client_msg_recvd(const TcpServerController* tcp_server,const T
 /*Application exe*/
 int main()
 {
-    TcpServerController* server = new TcpServerController("127.0.0.1", 4000, "Redflag TCP Server");
+    TcpServerController* server1 = new TcpServerController("127.0.0.1", 4000, "Redflag TCP Server");
     
     
     //using the tcp library to register callbacks
-    server->SetServerNotiCallbacks(appln_client_connected,appln_client_disconnected,appln_client_msg_recvd);
+    server1->SetServerNotiCallbacks(appln_client_connected,appln_client_disconnected,appln_client_msg_recvd);
 
-    server->Start();  
+    server1->Start();  
     
 
-    while(1) 
-    {
-        sleep(1);
-    }
+    scanf("\n");
+    server1->Display();
 
     return 0;
 }

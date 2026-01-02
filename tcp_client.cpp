@@ -53,13 +53,10 @@ int main(int argc, char* argv[]) {
     printf("Client: connect() successful!\n");
     printf("Client: Connected to server via socket %d\n", sockfd);
     
-    
-    // 7. 等待一小会儿然后关闭（保持简单）
-    sleep(1);
-    
-    // 8. 关闭连接
-    close(sockfd);
-    printf("Client: Connection closed\n");
+    // 让客户端一直运行，不要退出
+    while(1) {
+        sleep(1);  // 永久保持连接
+    }
     
     return 0;
 }

@@ -19,6 +19,8 @@ class TcpClientDBManager
 
         void StartTcpClientDbMgrInit();
         void AddClienttoDB(TcpClient* tcp_client);
+
+        void DisplayClientDB();
 };
 
 

@@ -15,6 +15,7 @@ class TcpClient{
         int comm_fd;
         TcpServerController* tcp_ctrlr;
         TcpClient(uint32_t ip_addr,uint16_t port_no);
+        void Display();
 
 };
 
