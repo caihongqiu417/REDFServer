@@ -1,149 +1,141 @@
-// tcp_client.cpp (修改版)
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netdb.h>
+#include <memory.h>
+#include <unistd.h>
+#include <errno.h>
 #include <arpa/inet.h>
-#include <termios.h>
-#include <signal.h>
 
-// 全局变量用于信号处理
-static volatile int keep_running = 1;
+#define DEST_PORT            40000
+#define SERVER_IP_ADDRESS   "127.0.0.1"
 
-// 信号处理函数
-void int_handler(int dummy) {
-    keep_running = 0;
-    printf("\n正在关闭客户端...\n");
+#define SRC_PORT	     40001
+#define LOCAL_IP_ADDRESS "127.0.0.1"
+
+#pragma pack (push,1)
+typedef struct _test_struct{
+
+    uint16_t msg_size;
+    unsigned int a;
+    unsigned int b;
+} test_struct_t;
+#pragma pack(pop)
+
+typedef struct result_struct_{
+
+    unsigned int c;
+
+} result_struct_t;
+
+test_struct_t client_data[2];
+result_struct_t result;
+
+void
+setup_tcp_communication(){
+
+    /*Step 1 : Initialization*/
+    /*Socket handle*/
+    int sockfd = 0, 
+        sent_recv_bytes = 0;
+
+    socklen_t addr_len = 0;
+
+    addr_len = sizeof(struct sockaddr);
+
+    /*to store socket addesses : ip address and port*/
+    struct sockaddr_in dest;
+
+    /*Step 2: specify server information*/
+    /*Ipv4 sockets, Other values are IPv6*/
+    dest.sin_family = AF_INET;
+
+    /*Client wants to send data to server process which is running on server machine, and listening on 
+     * port on DEST_PORT, server IP address SERVER_IP_ADDRESS.
+     * Inform client about which server to send data to : All we need is port number, and server ip address. Pls note that
+     * there can be many processes running on the server listening on different no of ports, 
+     * our client is interested in sending data to server process which is lisetning on PORT = DEST_PORT*/ 
+    dest.sin_port = htons(DEST_PORT);
+    struct hostent *host = (struct hostent *)gethostbyname(SERVER_IP_ADDRESS);
+    dest.sin_addr = *((struct in_addr *)host->h_addr);
+
+    /*Step 3 : Create a TCP socket*/
+    /*Create a socket finally. socket() is a system call, which asks for three paramemeters*/
+    sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+#if 0
+    /*to specify the client IP Address and Port no*/
+    struct sockaddr_in localaddr;
+    localaddr.sin_family = AF_INET;
+    localaddr.sin_addr.s_addr = inet_addr(LOCAL_IP_ADDRESS);
+    localaddr.sin_port = htons(SRC_PORT);  // Any local port will do
+    bind(sockfd, (struct sockaddr *)&localaddr, sizeof(localaddr));
+#endif
+    printf("Connecting to Server\n");
+    int rc = connect(sockfd, (struct sockaddr *)&dest,sizeof(struct sockaddr));
+
+    if (rc == 0) {
+    	printf("connected\n");
+    }
+    else {
+    	printf("connection failed, error no %d\n", errno);
+    	exit(0);
+    }
+
+    /*Step 4 : get the data to be sent to server*/
+    /*Our client is now ready to send data to server. sendto() sends data to Server*/
+
+PROMPT_USER:
+
+    /*prompt the user to enter data*/
+    printf("Enter a1 : ?\n");
+    scanf("%u", &client_data[0].a);
+    printf("Enter b1 : ?\n");
+    scanf("%u", &client_data[0].b);
+    client_data[0].msg_size = sizeof(client_data[0]);
+
+    printf("Enter a2 : ?\n");
+    scanf("%u", &client_data[1].a);
+    printf("Enter b2 : ?\n");
+    scanf("%u", &client_data[1].b);
+    client_data[1].msg_size = sizeof(client_data[1]);
+
+	if(client_data[0].a == 0 && client_data[0].b == 0) {
+		close(sockfd);
+		exit(0);
+	}
+    
+    /*step 5 : send the data to server*/
+    sent_recv_bytes = sendto(sockfd, 
+           client_data,
+           sizeof(client_data), 
+           0, 
+           (struct sockaddr *)&dest, 
+           sizeof(struct sockaddr));
+    
+    printf("No of bytes sent = %d\n", sent_recv_bytes);
+  
+    /*Step 6 : Client also want to reply from server after sending data*/
+    #if 0
+    /*recvfrom is a blocking system call, meaning the client program will not run past this point
+     * untill the data arrives on the socket from server*/
+    printf("Waiting for response:\n");
+    sent_recv_bytes =  recvfrom(sockfd, (char *)&result, sizeof(result_struct_t), 0,
+                    (struct sockaddr *)&dest, &addr_len);
+
+    printf("No of bytes recvd = %d\n", sent_recv_bytes);
+    
+    printf("Result recvd = %u\n", result.c);
+    #endif
+    /*Step 7: Client would want to send the data again to the server, go into infinite loop*/
+    goto PROMPT_USER;
 }
+    
 
-// 设置非阻塞输入
-void set_nonblocking(int enable) {
-    static struct termios oldt, newt;
-    
-    if (enable) {
-        tcgetattr(STDIN_FILENO, &oldt);
-        newt = oldt;
-        newt.c_lflag &= ~(ICANON | ECHO);
-        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    } else {
-        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-    }
-}
+int
+main(int argc, char **argv){
 
-int main(int argc, char* argv[]) {
-    // 设置信号处理
-    signal(SIGINT, int_handler);
-    
-    // 1. 检查参数
-    if (argc != 3) {
-        printf("Usage: %s <server_ip> <server_port>\n", argv[0]);
-        printf("Example: %s 127.0.0.1 4000\n", argv[0]);
-        return 1;
-    }
-    
-    const char* server_ip = argv[1];
-    int server_port = atoi(argv[2]);
-    
-    printf("Client: Connecting to %s:%d\n", server_ip, server_port);
-    printf("Press Ctrl+C to exit\n");
-    
-    // 2. 创建socket
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        perror("socket() failed");
-        return 1;
-    }
-    
-    // 3. 设置服务器地址
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(server_port);
-    
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        printf("Invalid IP address: %s\n", server_ip);
-        close(sockfd);
-        return 1;
-    }
-    
-    // 4. 连接服务器
-    printf("Client: Attempting connect()...\n");
-    if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("connect() failed");
-        close(sockfd);
-        return 1;
-    }
-    
-    // 5. 连接成功
-    printf("Client: connect() successful!\n");
-    printf("Client: Connected to server via socket %d\n", sockfd);
-    printf("Enter messages to send (type 'quit' to exit):\n");
-    
-    // 设置非阻塞输入
-    set_nonblocking(1);
-    
-    char input_buffer[1024];
-    int input_index = 0;
-    
-    while (keep_running) {
-        // 检查用户输入
-        int ch = getchar();
-        if (ch != EOF) {
-            if (ch == '\n') {
-                // 发送消息
-                if (input_index > 0) {
-                    input_buffer[input_index] = '\0';
-                    
-                    // 检查是否退出
-                    if (strcmp(input_buffer, "quit") == 0) {
-                        printf("Disconnecting...\n");
-                        break;
-                    }
-                    
-                    // 发送消息到服务器
-                    int bytes_sent = send(sockfd, input_buffer, input_index, 0);
-                    if (bytes_sent > 0) {
-                        printf("Sent %d bytes: %s\n", bytes_sent, input_buffer);
-                    } else {
-                        perror("send() failed");
-                        break;
-                    }
-                    
-                    // 接收服务器的响应（如果有）
-                    char recv_buffer[1024];
-                    int bytes_received = recv(sockfd, recv_buffer, sizeof(recv_buffer) - 1, 0);
-                    if (bytes_received > 0) {
-                        recv_buffer[bytes_received] = '\0';
-                        printf("Server response: %s\n", recv_buffer);
-                    } else if (bytes_received == 0) {
-                        printf("Server disconnected\n");
-                        break;
-                    }
-                    
-                    input_index = 0;
-                }
-            } else {
-                // 添加到缓冲区
-                if (input_index < sizeof(input_buffer) - 1) {
-                    input_buffer[input_index++] = ch;
-                    putchar(ch);
-                    fflush(stdout);
-                }
-            }
-        }
-        
-        // 短暂休眠以避免CPU占用过高
-        usleep(10000); // 10ms
-    }
-    
-    // 恢复终端设置
-    set_nonblocking(0);
-    
-    // 关闭socket
-    close(sockfd);
-    printf("Client disconnected\n");
-    
+    setup_tcp_communication();
+    printf("application quits\n");
     return 0;
 }

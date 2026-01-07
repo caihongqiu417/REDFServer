@@ -99,7 +99,7 @@ int main()
     printf("===== TCP 服务器启动 =====\n");
     
     // 创建TCP服务器
-    TcpServerController* server1 = new TcpServerController("127.0.0.1", 4000, "Redflag TCP Server");
+    TcpServerController* server1 = new TcpServerController("127.0.0.1", 40000, "Redflag TCP Server");
     
     // 注册回调函数
     server1->SetServerNotiCallbacks(appln_client_connected,
@@ -111,8 +111,6 @@ int main()
     server1->Start();  
     
     printf("服务器已启动！\n");
-    printf("使用以下命令测试客户端连接:\n");
-    printf("$ ./client 127.0.0.1 4000\n\n");
     
     int choice = 0;
     char input_buffer[256];
@@ -148,7 +146,7 @@ int main()
     
     // 清理资源
     delete server1;
-    printf("服务器已关闭\n");
+    printf("Redflag服务器已关闭\n");
     
     return 0;
 }

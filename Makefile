@@ -1,7 +1,7 @@
 CC=g++
 # 修正的编译选项
 CFLAGS=-g -std=c++11 -Wall -Wextra -pthread
-TARGET:testapp.exe tcp_client.exe
+TARGET:testapp.exe tcp_client.exe tcp_client_string_sender.exe  # 添加新目标
 LIBS=-lpthread
 
 OBJS=TcpClientDBManager.o \
@@ -14,19 +14,25 @@ OBJS=TcpClientDBManager.o \
 # 默认目标
 all: $(TARGET)
 
-# 客户端编译规则
+# 1. 原始客户端编译规则
 tcp_client.exe: tcp_client.o
 	$(CC) $(CFLAGS) tcp_client.o -o tcp_client.exe
 
-# 服务器编译规则
+# 2. 服务器编译规则
 testapp.exe: testapp.o $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) testapp.o -o testapp.exe $(LIBS)
 
-# 客户端源文件编译
+# 3. 新增：字符串发送器编译规则（用于测试TCP消息边界）
+tcp_client_string_sender.exe: tcp_client_string_sender.o
+	$(CC) $(CFLAGS) tcp_client_string_sender.o -o tcp_client_string_sender.exe
+
+# 源文件编译规则
+tcp_client_string_sender.o: tcp_client_string_sender.cpp
+	$(CC) $(CFLAGS) -c tcp_client_string_sender.cpp -o tcp_client_string_sender.o
+
 tcp_client.o: tcp_client.cpp
 	$(CC) $(CFLAGS) -c tcp_client.cpp -o tcp_client.o
 
-# 服务器源文件编译
 testapp.o: testapp.cpp
 	$(CC) $(CFLAGS) -c testapp.cpp -o testapp.o
 
@@ -55,13 +61,3 @@ clean:
 
 # 重新编译所有
 rebuild: clean all
-
-# 运行测试
-run: testapp.exe
-	./testapp.exe
-
-# 运行客户端
-run-client: tcp_client.exe
-	./tcp_client.exe 127.0.0.1 4000
-
-.PHONY: all clean rebuild run run-client
