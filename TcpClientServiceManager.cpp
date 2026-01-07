@@ -15,6 +15,7 @@
 #include "TcpClient.h" 
 
 #define TCP_CLIENT_RECV_BUFFER_SIZE 1024
+static unsigned char client_recv_buffer[TCP_CLIENT_RECV_BUFFER_SIZE];
 
 TcpClientServiceManager::TcpClientServiceManager(TcpServerController* tcp_ctrl)
 {
@@ -93,11 +94,10 @@ void TcpClientServiceManager::StartTcpClientServiceManagerThreadInternal()
             // 5. 检查socket是否就绪
             if (FD_ISSET(tcp_client->comm_fd, &this->active_fd_set))
             {
-                // 使用简单的栈缓冲区
-                char buffer[1024];
+                
                 
                 // 使用 recv() 而不是 recvfrom()
-                rcv_bytes = recv(tcp_client->comm_fd, buffer, sizeof(buffer), 0);
+                rcv_bytes = recv(tcp_client->comm_fd, client_recv_buffer,sizeof(client_recv_buffer), 0);
                 
                 // 处理接收结果
                 if (rcv_bytes > 0) {
@@ -106,7 +106,7 @@ void TcpClientServiceManager::StartTcpClientServiceManagerThreadInternal()
                     {
                         this->tcp_ctrl->client_msg_recvd(this->tcp_ctrl, 
                                                        tcp_client, 
-                                                       (unsigned char*)buffer, 
+                                                       (unsigned char*)client_recv_buffer, 
                                                        rcv_bytes);
                     }
                 }
