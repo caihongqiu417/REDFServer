@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <arpa/inet.h>
+#include <string.h>
+#include "msg_protocol.h"
 
 #define DEST_PORT            40000
 #define SERVER_IP_ADDRESS   "127.0.0.1"
@@ -69,30 +71,25 @@ setup_tcp_communication(){
 
     const char *msg1 = "Hello Abhishek, ";
     const char *msg2 = "how are you";
-    int len1 = strlen (msg1);
-    int len2 = strlen (msg2);
 
     while (1) {
-    //usleep(1000);
+        /* Step 5: 发送带包头的消息，解决粘包问题 */
+        /* msg1 和 msg2 作为两条独立消息，各自带 4 字节包头 */
+        int rc1 = msg_send(sockfd, (const uint8_t *)msg1, (uint32_t)strlen(msg1));
+        if (rc1 < 0) {
+            printf("send msg1 failed, errno=%d\n", errno);
+            break;
+        }
+        printf("msg1 sent: [%s] (%zu bytes body)\n", msg1, strlen(msg1));
 
-    /*step 5 : send the data to server*/
-    sent_recv_bytes = sendto(sockfd, 
-           msg1,
-           len1,
-           0, 
-           (struct sockaddr *)&dest, 
-           sizeof(struct sockaddr));
- 
-    printf("No of bytes sent = %d\n", sent_recv_bytes);
-    
-    sent_recv_bytes = sendto(sockfd, 
-           msg2,
-           len2,
-           0, 
-           (struct sockaddr *)&dest, 
-           sizeof(struct sockaddr));
-    
-    printf("No of bytes sent = %d\n", sent_recv_bytes);
+        int rc2 = msg_send(sockfd, (const uint8_t *)msg2, (uint32_t)strlen(msg2));
+        if (rc2 < 0) {
+            printf("send msg2 failed, errno=%d\n", errno);
+            break;
+        }
+        printf("msg2 sent: [%s] (%zu bytes body)\n", msg2, strlen(msg2));
+
+        sleep(1);   /* 每秒发送一轮，便于观察服务端日志 */
     }
 }
     

@@ -9,13 +9,68 @@
 #include <fcntl.h>
 #include <string.h>
 #include <vector>
+#include <arpa/inet.h>
 
 #include "TcpServerController.h"
 #include "TcpClientServiceManager.h"
-#include "TcpClient.h" 
+#include "TcpClient.h"
+#include "msg_protocol.h"
 
-#define TCP_CLIENT_RECV_BUFFER_SIZE 1024
-static unsigned char client_recv_buffer[TCP_CLIENT_RECV_BUFFER_SIZE];
+/*
+ * process_recv: 从 tcp_client 的 fd 读数据，写入 per-client 缓冲区，
+ *               循环解包并回调，处理粘包与半包。
+ * 返回值与 recv() 语义相同：>0 正常，0 对端关闭，-1 错误。
+ */
+static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
+{
+    uint8_t  *buf     = client->recv_buf;
+    uint32_t &used    = client->recv_buf_used;
+    uint32_t  buf_cap = (uint32_t)sizeof(client->recv_buf);
+
+    /* 1. 读取数据到缓冲区剩余空间 */
+    int n = recv(client->comm_fd, buf + used, buf_cap - used, 0);
+    if (n <= 0) return n;   /* 0=对端关闭，-1=错误，交给调用处处理 */
+    used += (uint32_t)n;
+
+    /* 2. 循环解包（一次 recv 可能带来多条完整消息） */
+    while (used >= MSG_HDR_SIZE)
+    {
+        /* 2a. 读包头，获取消息体长度 */
+        uint32_t body_len;
+        memcpy(&body_len, buf, MSG_HDR_SIZE);
+        body_len = ntohl(body_len);   /* 网络字节序 → 主机字节序 */
+
+        /* 防御：包体长度超出协议上限 → 协议错误，断开 */
+        if (body_len > MSG_MAX_BODY) {
+            printf("[process_recv] protocol error: body_len=%u > MAX=%u, fd=%d\n",
+                   body_len, MSG_MAX_BODY, client->comm_fd);
+            used = 0;
+            return -1;
+        }
+
+        uint32_t full_len = MSG_HDR_SIZE + body_len;
+
+        /* 2b. 半包：完整消息尚未到达，等下次 recv */
+        if (used < full_len) break;
+
+        /* 2c. 完整消息就绪，回调上层 */
+        if (svc_mgr->tcp_ctrl->client_msg_recvd) {
+            svc_mgr->tcp_ctrl->client_msg_recvd(
+                svc_mgr->tcp_ctrl,
+                client,
+                buf + MSG_HDR_SIZE,    /* 只传消息体，不含包头 */
+                (uint16_t)body_len
+            );
+        }
+
+        /* 2d. 将剩余数据前移（处理粘包：同一次 recv 带来多条消息） */
+        used -= full_len;
+        if (used > 0)
+            memmove(buf, buf + full_len, used);
+    }
+
+    return n;   /* 正数：本次 recv 正常 */
+}
 
 TcpClientServiceManager::TcpClientServiceManager(TcpServerController* tcp_ctrl)
 {
@@ -94,21 +149,13 @@ void TcpClientServiceManager::StartTcpClientServiceManagerThreadInternal()
             // 5. 检查socket是否就绪
             if (FD_ISSET(tcp_client->comm_fd, &this->active_fd_set))
             {
-                
-                
-                // 使用 recv() 而不是 recvfrom()
-                rcv_bytes = recv(tcp_client->comm_fd, client_recv_buffer,sizeof(client_recv_buffer), 0);
-                
-                // 处理接收结果
+
+                /* 使用协议解包替代裸 recv()，自动处理粘包与半包 */
+                rcv_bytes = process_recv(this, tcp_client);
+
+                // 处理接收结果（消息回调已在 process_recv 内部触发）
                 if (rcv_bytes > 0) {
-                    // 调用消息接收回调
-                    if(this->tcp_ctrl->client_msg_recvd)
-                    {
-                        this->tcp_ctrl->client_msg_recvd(this->tcp_ctrl, 
-                                                       tcp_client, 
-                                                       (unsigned char*)client_recv_buffer, 
-                                                       rcv_bytes);
-                    }
+                    /* 数据正常处理，无需额外操作 */
                 }
                 else if (rcv_bytes == 0) {
                     // 客户端断开连接
