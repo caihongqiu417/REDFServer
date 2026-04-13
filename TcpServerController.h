@@ -41,6 +41,10 @@ public:
     void ProcessNewClient(TcpClient* tcp_client);
 
     void Display();
+
+    // 广播给所有客户端，exclude 为发送者（传 nullptr 则广播给所有人）
+    // const：不修改服务器自身状态，可在 const TcpServerController* 回调中直接调用
+    void Broadcast(const uint8_t* body, uint32_t len, const TcpClient* exclude) const;
 };
 
 #endif

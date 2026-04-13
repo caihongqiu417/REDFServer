@@ -78,9 +78,9 @@ static void appln_client_msg_recvd(const TcpServerController* tcp_server,
     }
     printf("====================\n");
     
-    // 示例：回显消息给客户端
-    // 注意：这里只是打印，实际发送需要实现发送功能
-    printf("准备回显 %d 字节给客户端\n", msg_size);
+    // 广播给其他所有客户端（exclude=tcp_client，发送者不收到自己的消息）
+    tcp_server->Broadcast(msg, msg_size, tcp_client);
+    printf("已广播 %d 字节给其他客户端\n", msg_size);
 }
 
 /* 显示菜单 */

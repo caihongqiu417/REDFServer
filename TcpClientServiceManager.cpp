@@ -224,8 +224,6 @@ void TcpClientServiceManager::ClientFDStartListen(TcpClient* tcp_client)
     AddClientToDB(tcp_client);
     client_svc_mgr_thread=(pthread_t*)calloc(1,sizeof(pthread_t));
     StartTcpClientServiceManagerThread();
-    // 将客户端添加到自己的数据库
-    AddClientToDB(tcp_client);
 }
 
 int TcpClientServiceManager::GetMaxFd() {
@@ -274,6 +272,37 @@ void TcpClientServiceManager::AddClientToDB(TcpClient *tcp_client)
 {
     this->tcp_client_db.push_back(tcp_client);
     printf("Client added to service manager: fd=%d\n", tcp_client->comm_fd);
+}
+
+// 向单个客户端发送一条完整消息（msg_send 负责写包头+包体）
+void TcpClientServiceManager::SendToClient(TcpClient* client,
+                                           const uint8_t* body,
+                                           uint32_t len)
+{
+    if (!client || client->comm_fd < 0) return;
+    printf("[SendToClient] 尝试发送 %u 字节到 fd=%d\n", len, client->comm_fd);
+    int rc = msg_send(client->comm_fd, body, len);
+    if (rc < 0)
+        printf("[SendToClient] 发送失败, fd=%d, errno=%d\n", client->comm_fd, errno);
+    else
+        printf("[SendToClient] 发送成功, fd=%d\n", client->comm_fd);
+}
+
+// 遍历 tcp_client_db，跳过发送者(exclude)，逐个转发消息
+// 此函数在 client_msg_recvd 回调内被调用，与 select 线程同一上下文，无需加锁
+void TcpClientServiceManager::Broadcast(const uint8_t* body,
+                                        uint32_t len,
+                                        const TcpClient* exclude)
+{
+    int total = 0, sent = 0;
+    for (auto* target : tcp_client_db) {
+        total++;
+        if (target == exclude) continue;
+        sent++;
+        SendToClient(target, body, len);
+    }
+    printf("[Broadcast] DB中共 %d 个客户端，发送给 %d 个（排除发送者 fd=%d）\n",
+           total, sent, exclude ? exclude->comm_fd : -1);
 }
 
 void TcpClientServiceManager::StopTcpClientServiceManagerThread()

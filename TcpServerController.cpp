@@ -68,6 +68,12 @@ void TcpServerController::Stop()
     // 实现停止服务器的逻辑
 }
 
+void TcpServerController::Broadcast(const uint8_t* body, uint32_t len, const TcpClient* exclude) const
+{
+    if (tcp_client_svc_mgr)
+        tcp_client_svc_mgr->Broadcast(body, len, exclude);
+}
+
 void TcpServerController::Display()
 {
     printf("Server Name:%s\n", this->name.c_str());
