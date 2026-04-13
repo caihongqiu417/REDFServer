@@ -335,11 +335,17 @@ void TcpClientServiceManager::SendPlayerListTo(const TcpClient* new_client)
     uint16_t count = 0;
     payload.push_back(0); payload.push_back(0);   /* 2 字节占位 */
 
-    char entry[32];
+    char entry[256];
     for (auto* c : tcp_client_db) {
-        struct in_addr addr;
-        addr.s_addr = c->ip_addr;   /* ip_addr 已是网络字节序，inet_ntoa 直接用 */
-        snprintf(entry, sizeof(entry), "%s:%d", inet_ntoa(addr), ntohs(c->port_no));
+        if (!c->nickname.empty()) {
+            /* 已收到 MSG_JOIN：用昵称 */
+            snprintf(entry, sizeof(entry), "%s", c->nickname.c_str());
+        } else {
+            /* 尚未 Join：回退到 ip:port */
+            struct in_addr addr;
+            addr.s_addr = c->ip_addr;
+            snprintf(entry, sizeof(entry), "%s:%d", inet_ntoa(addr), ntohs(c->port_no));
+        }
 
         uint16_t slen = (uint16_t)strlen(entry);
         uint16_t net_slen = htons(slen);

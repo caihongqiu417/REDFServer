@@ -87,6 +87,12 @@ static void appln_client_msg_recvd(const TcpServerController* tcp_server,
     }
     printf("====================\n");
 
+    /* MSG_JOIN：保存昵称，供后来连入的客户端通过 MSG_PLAYER_LIST 看到 */
+    if (msg_type == MSG_JOIN && msg_size > 0) {
+        tcp_client->nickname = std::string((char*)msg, msg_size);
+        printf("已记录昵称: fd=%d -> \"%s\"\n", tcp_client->comm_fd, tcp_client->nickname.c_str());
+    }
+
     /* 广播：把 msg_type 一并转发，接收方能知道这条消息的类型 */
     tcp_server->Broadcast(msg, msg_size, msg_type, tcp_client);
     printf("已广播 %d 字节(type=%s)给其他客户端\n", msg_size, type_str);
