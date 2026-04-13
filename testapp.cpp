@@ -32,6 +32,10 @@ static void appln_client_connected(const TcpServerController* tcp_server,const T
     print_client(tcp_client);
     printf("(fd=%d)\n", tcp_client->comm_fd);
     printf("========================\n");
+
+    /* 向新客户端推送当前在线玩家列表
+     * 此时 tcp_client 尚未进入 ServiceManager DB，所以列表只含旧玩家 */
+    tcp_server->SendPlayerListTo(tcp_client);
 }
 
 /* 回调函数：客户端断开连接 */
@@ -54,10 +58,11 @@ static void appln_client_msg_recvd(const TcpServerController* tcp_server,
 {
     /* msg_type 取值见 msg_protocol.h 的 MsgType 枚举：
      * 1=MSG_CHAT, 2=MSG_JOIN, 3=MSG_LEAVE, 4=MSG_NICK_SET */
-    const char* type_str = (msg_type == 1) ? "CHAT"     :
-                           (msg_type == 2) ? "JOIN"     :
-                           (msg_type == 3) ? "LEAVE"    :
-                           (msg_type == 4) ? "NICK_SET" : "UNKNOWN";
+    const char* type_str = (msg_type == 1) ? "CHAT"        :
+                           (msg_type == 2) ? "JOIN"        :
+                           (msg_type == 3) ? "LEAVE"       :
+                           (msg_type == 4) ? "NICK_SET"    :
+                           (msg_type == 5) ? "PLAYER_LIST" : "UNKNOWN";
 
     printf("\n===== 收到消息 =====\n");
     printf("来自客户端: ");

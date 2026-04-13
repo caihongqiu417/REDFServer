@@ -49,6 +49,10 @@ public:
     // msg_type: 转发时保持与原消息相同的类型
     // const：不修改服务器自身状态，可在 const TcpServerController* 回调中直接调用
     void Broadcast(const uint8_t* body, uint32_t len, uint16_t msg_type, const TcpClient* exclude) const;
+
+    // 向新连入的客户端发送当前在线玩家列表（MSG_PLAYER_LIST）
+    // 在 client_connected 回调中调用；此时 new_client 尚未进入服务管理器 DB
+    void SendPlayerListTo(const TcpClient* new_client) const;
 };
 
 #endif

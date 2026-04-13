@@ -78,6 +78,12 @@ void TcpServerController::Broadcast(const uint8_t* body, uint32_t len, uint16_t 
         tcp_client_svc_mgr->Broadcast(body, len, msg_type, exclude);
 }
 
+void TcpServerController::SendPlayerListTo(const TcpClient* new_client) const
+{
+    if (tcp_client_svc_mgr)
+        tcp_client_svc_mgr->SendPlayerListTo(new_client);
+}
+
 void TcpServerController::Display()
 {
     printf("Server Name:%s\n", this->name.c_str());

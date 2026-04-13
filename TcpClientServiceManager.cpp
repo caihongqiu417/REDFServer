@@ -316,6 +316,52 @@ void TcpClientServiceManager::Broadcast(const uint8_t* body,
            total, sent, exclude ? exclude->comm_fd : -1);
 }
 
+/*
+ * SendPlayerListTo: 将当前在线玩家列表打包为 MSG_PLAYER_LIST 发送给新客户端。
+ *
+ * body格式：[num: uint16_t 大端] 重复num次 [len: uint16_t 大端][str: len字节]
+ * str 内容："ip:port"，如 "127.0.0.1:40001"
+ *
+ * 在 client_connected 回调中调用，此时 new_client 尚未加入 tcp_client_db，
+ * 所以列表里只含已在线的旧玩家，语义正确。
+ */
+void TcpClientServiceManager::SendPlayerListTo(const TcpClient* new_client)
+{
+    if (!new_client || new_client->comm_fd < 0) return;
+
+    std::vector<uint8_t> payload;
+
+    /* 先写占位的 num_players，稍后回填 */
+    uint16_t count = 0;
+    payload.push_back(0); payload.push_back(0);   /* 2 字节占位 */
+
+    char entry[32];
+    for (auto* c : tcp_client_db) {
+        struct in_addr addr;
+        addr.s_addr = c->ip_addr;   /* ip_addr 已是网络字节序，inet_ntoa 直接用 */
+        snprintf(entry, sizeof(entry), "%s:%d", inet_ntoa(addr), ntohs(c->port_no));
+
+        uint16_t slen = (uint16_t)strlen(entry);
+        uint16_t net_slen = htons(slen);
+        payload.push_back((uint8_t)(net_slen >> 8));
+        payload.push_back((uint8_t)(net_slen & 0xFF));
+        payload.insert(payload.end(), (uint8_t*)entry, (uint8_t*)entry + slen);
+        count++;
+    }
+
+    /* 回填 num_players */
+    uint16_t net_count = htons(count);
+    payload[0] = (uint8_t)(net_count >> 8);
+    payload[1] = (uint8_t)(net_count & 0xFF);
+
+    printf("[SendPlayerListTo] 发送玩家列表给 fd=%d，当前在线 %u 人\n",
+           new_client->comm_fd, count);
+
+    int rc = msg_send(new_client->comm_fd, payload.data(), (uint32_t)payload.size(), MSG_PLAYER_LIST);
+    if (rc < 0)
+        printf("[SendPlayerListTo] 发送失败, fd=%d\n", new_client->comm_fd);
+}
+
 void TcpClientServiceManager::StopTcpClientServiceManagerThread()
 {
     if (client_svc_mgr_thread && *client_svc_mgr_thread != 0) {

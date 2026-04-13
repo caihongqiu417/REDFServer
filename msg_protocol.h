@@ -23,10 +23,16 @@
 
 /* 消息类型枚举 */
 typedef enum : uint16_t {
-    MSG_CHAT     = 1,   /* 普通聊天消息 */
-    MSG_JOIN     = 2,   /* 进入聊天室通知 */
-    MSG_LEAVE    = 3,   /* 离开聊天室通知 */
-    MSG_NICK_SET = 4,   /* 设置昵称 */
+    MSG_CHAT        = 1,   /* 普通聊天消息 */
+    MSG_JOIN        = 2,   /* 进入聊天室通知（body: nickname字符串） */
+    MSG_LEAVE       = 3,   /* 离开聊天室通知（body: nickname字符串） */
+    MSG_NICK_SET    = 4,   /* 设置昵称 */
+    MSG_PLAYER_LIST = 5,   /* 服务器→新客户端：当前在线玩家列表
+                            * body格式：
+                            *   [num_players: uint16_t 大端]
+                            *   重复 num_players 次：
+                            *     [str_len: uint16_t 大端][str: str_len字节，无\0]
+                            *   每条 str 格式为 "ip:port"（如 "127.0.0.1:52341"） */
 } MsgType;
 
 /* ------------------------------------------------------------------ */

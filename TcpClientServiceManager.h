@@ -37,6 +37,8 @@ class TcpClientServiceManager
 
         void SendToClient(TcpClient* client, const uint8_t* body, uint32_t len, uint16_t msg_type);
         void Broadcast(const uint8_t* body, uint32_t len, uint16_t msg_type, const TcpClient* exclude);
+        /* 向新连入的客户端发送当前在线玩家列表（MSG_PLAYER_LIST） */
+        void SendPlayerListTo(const TcpClient* new_client);
 
 };
 
