@@ -35,8 +35,8 @@ class TcpClientServiceManager
         TcpClient* LookUpClientDB(uint32_t ip_addr, uint16_t port_no);
         void AddClientToDB(TcpClient *tcp_client);
 
-        void SendToClient(TcpClient* client, const uint8_t* body, uint32_t len);
-        void Broadcast(const uint8_t* body, uint32_t len, const TcpClient* exclude);
+        void SendToClient(TcpClient* client, const uint8_t* body, uint32_t len, uint16_t msg_type);
+        void Broadcast(const uint8_t* body, uint32_t len, uint16_t msg_type, const TcpClient* exclude);
 
 };
 

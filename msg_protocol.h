@@ -3,24 +3,35 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <arpa/inet.h>  /* htonl / ntohl */
+#include <arpa/inet.h>  /* htonl / ntohl / htons / ntohs */
 
 /*
- * 消息格式：
- * +--------------------+---------------------------+
- * |  Header (4 bytes)  |  Body  (N bytes)          |
- * |  uint32_t 网络字节序 |  消息内容                  |
- * +--------------------+---------------------------+
- * Header 存储 Body 的字节长度，不含 Header 自身。
+ * 消息格式（扩展版，新增 2 字节消息类型字段）：
+ *
+ * +--------------------+--------------------+---------------------------+
+ * |  body_len (4 bytes)|  msg_type (2 bytes)|  body  (N bytes)          |
+ * |  uint32_t 网络字节序 |  uint16_t 网络字节序 |  消息内容                  |
+ * +--------------------+--------------------+---------------------------+
+ *
+ * body_len: 仅表示 body 的字节数，不含 6 字节包头自身。
+ * msg_type: 消息语义类型，见 MsgType 枚举。
  */
 
-#define MSG_HDR_SIZE  ((uint32_t)sizeof(uint32_t))   /* 包头固定 4 字节 */
-#define MSG_MAX_BODY  ((uint32_t)(64 * 1024))         /* 单条消息体最大 64 KB */
+/* 包头总长度 = 4字节长度 + 2字节类型 */
+#define MSG_HDR_SIZE  ((uint32_t)(sizeof(uint32_t) + sizeof(uint16_t)))  /* 6 */
+#define MSG_MAX_BODY  ((uint32_t)(64 * 1024))   /* 单条消息体最大 64 KB */
 
-/*
- * msg_send_all: 保证将 len 字节全部写入 fd（处理 TCP 短写）
- * 返回 0 成功，-1 失败
- */
+/* 消息类型枚举 */
+typedef enum : uint16_t {
+    MSG_CHAT     = 1,   /* 普通聊天消息 */
+    MSG_JOIN     = 2,   /* 进入聊天室通知 */
+    MSG_LEAVE    = 3,   /* 离开聊天室通知 */
+    MSG_NICK_SET = 4,   /* 设置昵称 */
+} MsgType;
+
+/* ------------------------------------------------------------------ */
+/*  内部工具：保证将 len 字节全部写入 fd（处理 TCP 短写）               */
+/* ------------------------------------------------------------------ */
 static inline int msg_send_all(int fd, const uint8_t *buf, uint32_t len)
 {
     uint32_t sent = 0;
@@ -32,18 +43,22 @@ static inline int msg_send_all(int fd, const uint8_t *buf, uint32_t len)
     return 0;
 }
 
-/*
- * msg_send: 发送一条带包头的完整消息
- * 先写 4 字节长度头（网络字节序），再写消息体
- * 返回 0 成功，-1 失败
- */
-static inline int msg_send(int fd, const uint8_t *body, uint32_t body_len)
+/* ------------------------------------------------------------------ */
+/*  msg_send: 发送一条带包头（长度+类型）的完整消息                     */
+/*  写顺序：① 4字节 body_len → ② 2字节 msg_type → ③ body             */
+/*  返回 0 成功，-1 失败                                               */
+/* ------------------------------------------------------------------ */
+static inline int msg_send(int fd,
+                           const uint8_t *body,
+                           uint32_t       body_len,
+                           uint16_t       msg_type)
 {
-    uint32_t net_len = htonl(body_len);
-    if (msg_send_all(fd, (const uint8_t *)&net_len, MSG_HDR_SIZE) < 0)
-        return -1;
-    if (body_len > 0 && msg_send_all(fd, body, body_len) < 0)
-        return -1;
+    uint32_t net_len  = htonl(body_len);
+    uint16_t net_type = htons(msg_type);
+
+    if (msg_send_all(fd, (const uint8_t *)&net_len,  sizeof(net_len))  < 0) return -1;
+    if (msg_send_all(fd, (const uint8_t *)&net_type, sizeof(net_type)) < 0) return -1;
+    if (body_len > 0 && msg_send_all(fd, body, body_len) < 0)               return -1;
     return 0;
 }
 

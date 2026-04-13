@@ -35,10 +35,15 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
     /* 2. 循环解包（一次 recv 可能带来多条完整消息） */
     while (used >= MSG_HDR_SIZE)
     {
-        /* 2a. 读包头，获取消息体长度 */
+        /* 2a. 读包头前4字节 → body长度 */
         uint32_t body_len;
-        memcpy(&body_len, buf, MSG_HDR_SIZE);
-        body_len = ntohl(body_len);   /* 网络字节序 → 主机字节序 */
+        memcpy(&body_len, buf, sizeof(uint32_t));
+        body_len = ntohl(body_len);
+
+        /* 2b. 读包头第5-6字节 → 消息类型 */
+        uint16_t msg_type;
+        memcpy(&msg_type, buf + sizeof(uint32_t), sizeof(uint16_t));
+        msg_type = ntohs(msg_type);
 
         /* 防御：包体长度超出协议上限 → 协议错误，断开 */
         if (body_len > MSG_MAX_BODY) {
@@ -50,16 +55,20 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
 
         uint32_t full_len = MSG_HDR_SIZE + body_len;
 
-        /* 2b. 半包：完整消息尚未到达，等下次 recv */
+        /* 2c. 半包：完整消息尚未到达，等下次 recv */
         if (used < full_len) break;
 
-        /* 2c. 完整消息就绪，回调上层 */
+        /* 2d. 完整消息就绪，回调上层
+         * 回调原理：tcp_ctrl->client_msg_recvd 是一个函数指针，
+         * 指向 testapp.cpp 中用 SetServerNotiCallbacks 注册的
+         * appln_client_msg_recvd 函数。调用它就等于通知应用层。 */
         if (svc_mgr->tcp_ctrl->client_msg_recvd) {
             svc_mgr->tcp_ctrl->client_msg_recvd(
                 svc_mgr->tcp_ctrl,
                 client,
                 buf + MSG_HDR_SIZE,    /* 只传消息体，不含包头 */
-                (uint16_t)body_len
+                (uint16_t)body_len,
+                msg_type               /* 新增：消息类型透传给应用层 */
             );
         }
 
@@ -274,14 +283,15 @@ void TcpClientServiceManager::AddClientToDB(TcpClient *tcp_client)
     printf("Client added to service manager: fd=%d\n", tcp_client->comm_fd);
 }
 
-// 向单个客户端发送一条完整消息（msg_send 负责写包头+包体）
+// 向单个客户端发送一条完整消息（msg_send 负责写 6字节包头 + 包体）
 void TcpClientServiceManager::SendToClient(TcpClient* client,
                                            const uint8_t* body,
-                                           uint32_t len)
+                                           uint32_t len,
+                                           uint16_t msg_type)
 {
     if (!client || client->comm_fd < 0) return;
-    printf("[SendToClient] 尝试发送 %u 字节到 fd=%d\n", len, client->comm_fd);
-    int rc = msg_send(client->comm_fd, body, len);
+    printf("[SendToClient] 尝试发送 %u 字节(type=%u) 到 fd=%d\n", len, msg_type, client->comm_fd);
+    int rc = msg_send(client->comm_fd, body, len, msg_type);
     if (rc < 0)
         printf("[SendToClient] 发送失败, fd=%d, errno=%d\n", client->comm_fd, errno);
     else
@@ -292,6 +302,7 @@ void TcpClientServiceManager::SendToClient(TcpClient* client,
 // 此函数在 client_msg_recvd 回调内被调用，与 select 线程同一上下文，无需加锁
 void TcpClientServiceManager::Broadcast(const uint8_t* body,
                                         uint32_t len,
+                                        uint16_t msg_type,
                                         const TcpClient* exclude)
 {
     int total = 0, sent = 0;
@@ -299,7 +310,7 @@ void TcpClientServiceManager::Broadcast(const uint8_t* body,
         total++;
         if (target == exclude) continue;
         sent++;
-        SendToClient(target, body, len);
+        SendToClient(target, body, len, msg_type);
     }
     printf("[Broadcast] DB中共 %d 个客户端，发送给 %d 个（排除发送者 fd=%d）\n",
            total, sent, exclude ? exclude->comm_fd : -1);

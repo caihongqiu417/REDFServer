@@ -49,27 +49,31 @@ static void appln_client_disconnected(const TcpServerController* tcp_server,cons
 static void appln_client_msg_recvd(const TcpServerController* tcp_server,
                                   const TcpClient* tcp_client,
                                   unsigned char* msg,
-                                  uint16_t msg_size)
+                                  uint16_t msg_size,
+                                  uint16_t msg_type)   /* 新增：消息类型，来自包头第5-6字节 */
 {
+    /* msg_type 取值见 msg_protocol.h 的 MsgType 枚举：
+     * 1=MSG_CHAT, 2=MSG_JOIN, 3=MSG_LEAVE, 4=MSG_NICK_SET */
+    const char* type_str = (msg_type == 1) ? "CHAT"     :
+                           (msg_type == 2) ? "JOIN"     :
+                           (msg_type == 3) ? "LEAVE"    :
+                           (msg_type == 4) ? "NICK_SET" : "UNKNOWN";
+
     printf("\n===== 收到消息 =====\n");
     printf("来自客户端: ");
     print_client(tcp_client);
     printf("\n");
-    
-    // 打印消息内容
+    printf("消息类型: %s (%u)\n", type_str, msg_type);
     printf("消息长度: %d bytes\n", msg_size);
     printf("消息内容: ");
-    
-    // 以字符串形式显示
+
     if (msg_size > 0) {
-        // 确保以null结尾
         char* temp_buf = new char[msg_size + 1];
         memcpy(temp_buf, msg, msg_size);
         temp_buf[msg_size] = '\0';
         printf("'%s'\n", temp_buf);
         delete[] temp_buf;
-        
-        // 以十六进制显示
+
         printf("十六进制: ");
         for (int i = 0; i < msg_size; i++) {
             printf("%02X ", msg[i]);
@@ -77,10 +81,10 @@ static void appln_client_msg_recvd(const TcpServerController* tcp_server,
         printf("\n");
     }
     printf("====================\n");
-    
-    // 广播给其他所有客户端（exclude=tcp_client，发送者不收到自己的消息）
-    tcp_server->Broadcast(msg, msg_size, tcp_client);
-    printf("已广播 %d 字节给其他客户端\n", msg_size);
+
+    /* 广播：把 msg_type 一并转发，接收方能知道这条消息的类型 */
+    tcp_server->Broadcast(msg, msg_size, msg_type, tcp_client);
+    printf("已广播 %d 字节(type=%s)给其他客户端\n", msg_size, type_str);
 }
 
 /* 显示菜单 */

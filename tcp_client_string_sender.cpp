@@ -75,19 +75,20 @@ setup_tcp_communication(){
     while (1) {
         /* Step 5: 发送带包头的消息，解决粘包问题 */
         /* msg1 和 msg2 作为两条独立消息，各自带 4 字节包头 */
-        int rc1 = msg_send(sockfd, (const uint8_t *)msg1, (uint32_t)strlen(msg1));
+        /* 发送时指定消息类型 MSG_CHAT=1，包头格式：4字节长度 + 2字节类型 */
+        int rc1 = msg_send(sockfd, (const uint8_t *)msg1, (uint32_t)strlen(msg1), MSG_CHAT);
         if (rc1 < 0) {
             printf("send msg1 failed, errno=%d\n", errno);
             break;
         }
-        printf("msg1 sent: [%s] (%zu bytes body)\n", msg1, strlen(msg1));
+        printf("msg1 sent: [%s] (%zu bytes body, type=MSG_CHAT)\n", msg1, strlen(msg1));
 
-        int rc2 = msg_send(sockfd, (const uint8_t *)msg2, (uint32_t)strlen(msg2));
+        int rc2 = msg_send(sockfd, (const uint8_t *)msg2, (uint32_t)strlen(msg2), MSG_CHAT);
         if (rc2 < 0) {
             printf("send msg2 failed, errno=%d\n", errno);
             break;
         }
-        printf("msg2 sent: [%s] (%zu bytes body)\n", msg2, strlen(msg2));
+        printf("msg2 sent: [%s] (%zu bytes body, type=MSG_CHAT)\n", msg2, strlen(msg2));
 
         sleep(1);   /* 每秒发送一轮，便于观察服务端日志 */
     }

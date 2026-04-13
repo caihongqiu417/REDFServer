@@ -46,11 +46,15 @@ void TcpServerController::ProcessNewClient(TcpClient* tcp_client)
 void TcpServerController::SetServerNotiCallbacks(
     void(*client_connected)(const TcpServerController*,const TcpClient*),
     void(*client_disconnected)(const TcpServerController*,const TcpClient*),
-    void(*client_msg_recvd)(const TcpServerController*,const TcpClient*,unsigned char*,uint16_t))
+    void(*client_msg_recvd)(const TcpServerController*,const TcpClient*,unsigned char*,uint16_t,uint16_t))
     {
         this->client_connected = client_connected;
         this->client_disconnected = client_disconnected;
         this->client_msg_recvd = client_msg_recvd;
+        /* 回调注册原理：
+         * 这里把 testapp.cpp 中定义的函数地址存入成员变量。
+         * 之后底层事件发生时，通过 tcp_ctrl->client_msg_recvd(...) 间接调用它。
+         * 这就是 C 语言风格的"回调"——函数指针 + 事件驱动。 */
     }
 
 // 析构函数（如果需要）
@@ -68,10 +72,10 @@ void TcpServerController::Stop()
     // 实现停止服务器的逻辑
 }
 
-void TcpServerController::Broadcast(const uint8_t* body, uint32_t len, const TcpClient* exclude) const
+void TcpServerController::Broadcast(const uint8_t* body, uint32_t len, uint16_t msg_type, const TcpClient* exclude) const
 {
     if (tcp_client_svc_mgr)
-        tcp_client_svc_mgr->Broadcast(body, len, exclude);
+        tcp_client_svc_mgr->Broadcast(body, len, msg_type, exclude);
 }
 
 void TcpServerController::Display()
