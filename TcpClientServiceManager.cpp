@@ -8,6 +8,7 @@
 #include <pthread.h>
 #include <fcntl.h>
 #include <string.h>
+#include <time.h>
 #include <vector>
 #include <arpa/inet.h>
 
@@ -58,17 +59,21 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
         /* 2c. 半包：完整消息尚未到达，等下次 recv */
         if (used < full_len) break;
 
-        /* 2d. 完整消息就绪，回调上层
-         * 回调原理：tcp_ctrl->client_msg_recvd 是一个函数指针，
-         * 指向 testapp.cpp 中用 SetServerNotiCallbacks 注册的
-         * appln_client_msg_recvd 函数。调用它就等于通知应用层。 */
-        if (svc_mgr->tcp_ctrl->client_msg_recvd) {
+        /* 2d. 完整消息就绪 */
+        if (msg_type == MSG_HEARTBEAT) {
+            /* 心跳包：刷新时间戳，不上报给应用层 */
+            client->last_heartbeat_time = time(nullptr);
+            printf("[心跳] 收到客户端心跳, fd=%d\n", client->comm_fd);
+        } else if (svc_mgr->tcp_ctrl->client_msg_recvd) {
+            /* 回调原理：tcp_ctrl->client_msg_recvd 是一个函数指针，
+             * 指向 testapp.cpp 中用 SetServerNotiCallbacks 注册的
+             * appln_client_msg_recvd 函数。调用它就等于通知应用层。 */
             svc_mgr->tcp_ctrl->client_msg_recvd(
                 svc_mgr->tcp_ctrl,
                 client,
                 buf + MSG_HDR_SIZE,    /* 只传消息体，不含包头 */
                 (uint16_t)body_len,
-                msg_type               /* 新增：消息类型透传给应用层 */
+                msg_type               /* 消息类型透传给应用层 */
             );
         }
 
@@ -130,13 +135,16 @@ void TcpClientServiceManager::StartTcpClientServiceManagerThreadInternal()
         this->max_fd = GetMaxFd();
         FD_ZERO(&this->backup_fd_set);
         CopyClientFDtoFDSet(&this->backup_fd_set);
-        
+
         // 2. 将备份的fd_set复制到活动fd_set中
         memcpy(&this->active_fd_set, &this->backup_fd_set, sizeof(fd_set));
-        
-        // 3. 调用select()系统调用
-        int ready = select(this->max_fd + 1, &this->active_fd_set, 0, 0, 0);
-        
+
+        // 3. 调用select()，设置5秒超时以便定期执行心跳检查
+        struct timeval tv;
+        tv.tv_sec  = 5;
+        tv.tv_usec = 0;
+        int ready = select(this->max_fd + 1, &this->active_fd_set, 0, 0, &tv);
+
         if (ready < 0) {
             if (errno == EINTR) {
                 continue;
@@ -144,21 +152,57 @@ void TcpClientServiceManager::StartTcpClientServiceManagerThreadInternal()
             perror("select error");
             break;
         }
-        
-        if (ready == 0) {
-            continue;
+
+        // 4. 心跳超时检查：每次 select 返回（含超时）都检查所有客户端
+        //    客户端每10秒发一次心跳，30秒内共3次；超过30秒未收到则判定离线
+        {
+            time_t now = time(nullptr);
+            it = this->tcp_client_db.begin();
+            while (it != this->tcp_client_db.end()) {
+                tcp_client = *it;
+                if (now - tcp_client->last_heartbeat_time >= 30) {
+                    // 构造离开消息体：优先用昵称，否则用 "ip:port"
+                    std::string leave_body;
+                    if (!tcp_client->nickname.empty()) {
+                        leave_body = tcp_client->nickname;
+                    } else {
+                        struct in_addr addr;
+                        addr.s_addr = tcp_client->ip_addr;
+                        char tmp[64];
+                        snprintf(tmp, sizeof(tmp), "%s:%d",
+                                 inet_ntoa(addr), ntohs(tcp_client->port_no));
+                        leave_body = tmp;
+                    }
+                    printf("[心跳] 客户端 %s 心跳超时（%lds），主动移除并广播离开\n",
+                           leave_body.c_str(), (long)(now - tcp_client->last_heartbeat_time));
+
+                    // 广播 MSG_LEAVE，通知其他客户端此人离线
+                    Broadcast((const uint8_t*)leave_body.data(),
+                              (uint32_t)leave_body.size(),
+                              MSG_LEAVE, tcp_client);
+
+                    FD_CLR(tcp_client->comm_fd, &this->backup_fd_set);
+                    close(tcp_client->comm_fd);
+                    it = this->tcp_client_db.erase(it);
+                    continue;
+                }
+                ++it;
+            }
         }
-        
-        // 4. 遍历所有客户端
+
+        if (ready == 0) {
+            continue;  // 纯超时，无可读 fd，回到循环顶
+        }
+
+        // 5. 遍历所有客户端，处理可读 fd
         it = this->tcp_client_db.begin();
         while (it != this->tcp_client_db.end())
         {
             tcp_client = *it;
-            
-            // 5. 检查socket是否就绪
+
+            // 检查socket是否就绪
             if (FD_ISSET(tcp_client->comm_fd, &this->active_fd_set))
             {
-
                 /* 使用协议解包替代裸 recv()，自动处理粘包与半包 */
                 rcv_bytes = process_recv(this, tcp_client);
 
@@ -166,33 +210,33 @@ void TcpClientServiceManager::StartTcpClientServiceManagerThreadInternal()
                 if (rcv_bytes > 0) {
                     /* 数据正常处理，无需额外操作 */
                 }
-                else if (rcv_bytes == 0) {
-                    // 客户端断开连接
+                else if (rcv_bytes == 0 ||
+                         (rcv_bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+                    // 客户端断开（正常关闭或错误），广播 MSG_LEAVE 通知其他人
                     printf("Client disconnected, fd=%d\n", tcp_client->comm_fd);
-                    
+
+                    std::string leave_body;
+                    if (!tcp_client->nickname.empty()) {
+                        leave_body = tcp_client->nickname;
+                    } else {
+                        struct in_addr addr;
+                        addr.s_addr = tcp_client->ip_addr;
+                        char tmp[64];
+                        snprintf(tmp, sizeof(tmp), "%s:%d",
+                                 inet_ntoa(addr), ntohs(tcp_client->port_no));
+                        leave_body = tmp;
+                    }
+                    Broadcast((const uint8_t*)leave_body.data(),
+                              (uint32_t)leave_body.size(),
+                              MSG_LEAVE, tcp_client);
+
                     FD_CLR(tcp_client->comm_fd, &this->backup_fd_set);
                     close(tcp_client->comm_fd);
-                    
-                    // 从列表中移除
                     it = this->tcp_client_db.erase(it);
                     continue;
                 }
-                else {
-                    // 接收错误
-                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                        printf("Recv error on fd %d: %s\n", 
-                               tcp_client->comm_fd, strerror(errno));
-                        
-                        FD_CLR(tcp_client->comm_fd, &this->backup_fd_set);
-                        close(tcp_client->comm_fd);
-                        
-                        // 从列表中移除
-                        it = this->tcp_client_db.erase(it);
-                        continue;
-                    }
-                }
             }
-            
+
             ++it;
         }
     }
@@ -208,10 +252,9 @@ void TcpClientServiceManager::StartTcpClientServiceManagerThread()
     
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    
-    // ✅ 现在传递指针
-    if (pthread_create(this->client_svc_mgr_thread,  // 直接传递指针，不需要&
+    /* 不设置 DETACHED，保持默认 JOINABLE，以便 StopXxx 中 pthread_join 能正常等待 */
+
+    if (pthread_create(this->client_svc_mgr_thread,
                       &attr,
                       tcp_client_svc_manager_thread_fn,
                       (void*)this) == 0) {
@@ -231,7 +274,7 @@ void TcpClientServiceManager::ClientFDStartListen(TcpClient* tcp_client)
     printf("ClientSvcMgr Thread is cancelled because of adding new ClientFD\n");
 
     AddClientToDB(tcp_client);
-    client_svc_mgr_thread=(pthread_t*)calloc(1,sizeof(pthread_t));
+    /* 复用构造函数 new 出来的指针，不再 calloc（否则 delete 与 calloc 混用是 UB） */
     StartTcpClientServiceManagerThread();
 }
 

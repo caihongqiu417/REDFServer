@@ -8,7 +8,8 @@
 #include <errno.h>
 
 ChatNetworkClient::ChatNetworkClient()
-    : sock_fd_(-1), connected_(false), stop_recv_(false), recv_buf_used_(0)
+    : sock_fd_(-1), connected_(false), stop_recv_(false), recv_buf_used_(0),
+      stop_hb_(true), hb_started_(false)
 {
     memset(recv_buf_, 0, sizeof(recv_buf_));
 }
@@ -45,6 +46,12 @@ bool ChatNetworkClient::Connect(const std::string& host, uint16_t port)
     recv_buf_used_ = 0;
 
     pthread_create(&recv_thread_, nullptr, RecvThreadFn, this);
+
+    /* 启动心跳线程：每10秒发送一次 MSG_HEARTBEAT */
+    stop_hb_.store(false);
+    hb_started_ = true;
+    pthread_create(&hb_thread_, nullptr, HeartbeatThreadFn, this);
+
     printf("[ChatNet] 已连接到 %s:%u\n", host.c_str(), port);
     return true;
 }
@@ -54,6 +61,7 @@ void ChatNetworkClient::Disconnect()
     if (!connected_.load() && sock_fd_ < 0) return;
 
     stop_recv_.store(true);
+    stop_hb_.store(true);
     connected_.store(false);
 
     if (sock_fd_ >= 0) {
@@ -63,6 +71,11 @@ void ChatNetworkClient::Disconnect()
     }
     /* 等接收线程退出 */
     pthread_join(recv_thread_, nullptr);
+    /* 等心跳线程退出（最多等 ~100ms 轮询间隔） */
+    if (hb_started_) {
+        pthread_join(hb_thread_, nullptr);
+        hb_started_ = false;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -109,6 +122,29 @@ void* ChatNetworkClient::RecvThreadFn(void* arg)
 {
     static_cast<ChatNetworkClient*>(arg)->RecvLoop();
     return nullptr;
+}
+
+void* ChatNetworkClient::HeartbeatThreadFn(void* arg)
+{
+    static_cast<ChatNetworkClient*>(arg)->HeartbeatLoop();
+    return nullptr;
+}
+
+/* 每10秒发送一次心跳包（MSG_HEARTBEAT, body为空）
+ * 以100ms为轮询粒度检查 stop_hb_，保证 Disconnect() 能快速退出 */
+void ChatNetworkClient::HeartbeatLoop()
+{
+    int ticks = 0;
+    while (!stop_hb_.load()) {
+        usleep(100000);  /* 100ms */
+        if (++ticks >= 100) {  /* 100 × 100ms = 10s */
+            ticks = 0;
+            if (connected_.load()) {
+                SendRaw(nullptr, 0, MSG_HEARTBEAT);
+                printf("[ChatNet] 心跳已发送\n");
+            }
+        }
+    }
 }
 
 void ChatNetworkClient::RecvLoop()

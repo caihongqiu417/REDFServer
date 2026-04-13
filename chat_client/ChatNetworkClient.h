@@ -49,4 +49,11 @@ private:
     void SendRaw(const uint8_t* body, uint32_t len, uint16_t type);
     static void* RecvThreadFn(void* arg);
     void RecvLoop();
+
+    /* 心跳线程：每10秒向服务器发送一次 MSG_HEARTBEAT（共3次/30s） */
+    pthread_t         hb_thread_;
+    std::atomic<bool> stop_hb_;
+    bool              hb_started_;
+    static void* HeartbeatThreadFn(void* arg);
+    void HeartbeatLoop();
 };

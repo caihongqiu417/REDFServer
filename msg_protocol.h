@@ -33,6 +33,7 @@ typedef enum : uint16_t {
                             *   重复 num_players 次：
                             *     [str_len: uint16_t 大端][str: str_len字节，无\0]
                             *   每条 str 格式为 "ip:port"（如 "127.0.0.1:52341"） */
+    MSG_HEARTBEAT   = 6,   /* 客户端→服务器：心跳包（body为空，30s内发3次） */
 } MsgType;
 
 /* ------------------------------------------------------------------ */

@@ -141,7 +141,9 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
             ImGui::TextColored(kRedHov, "● 未连接");
         } else {
             ImGui::SameLine();
-            ImGui::TextColored(kGray, "● 已连接");
+            ImGui::TextColored(ImVec4(0.10f, 0.78f, 0.10f, 1.00f), "●");
+            ImGui::SameLine();
+            ImGui::Text(" 已连接");
         }
     } else {
         /* 已加入：昵称用红色高亮 */

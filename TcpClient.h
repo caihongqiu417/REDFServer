@@ -3,6 +3,7 @@
 
 #include<stdint.h>
 #include<string>
+#include<time.h>
 #include "msg_protocol.h"
 
 // TCP服务器中表示一个客户端连接的数据类
@@ -20,6 +21,10 @@ class TcpClient{
         /* 客户端通过 MSG_JOIN 设置的昵称，服务器收到后存此处
          * mutable 允许在 const TcpClient* 回调中写入 */
         mutable std::string nickname;
+
+        /* 心跳检活：上次收到心跳的时间（连接时初始化，每收到 MSG_HEARTBEAT 刷新）
+         * 服务器每隔约 5s 检查一次；超过 30s 未收到心跳则视为超时，主动移除客户端 */
+        time_t last_heartbeat_time;
 
         /* 粘包/半包处理：每个客户端独立的接收缓冲区 */
         uint8_t  recv_buf[MSG_HDR_SIZE + MSG_MAX_BODY];
