@@ -5,6 +5,33 @@
 #include <cstdio>
 #include <algorithm>
 
+/* ------------------------------------------------------------------ */
+/*  统一色板（与 theme_red_white.xml 保持一致）                         */
+/* ------------------------------------------------------------------ */
+static const ImVec4 kRed     = {0.76f, 0.05f, 0.05f, 1.00f};  /* 品牌红  #C20C0C */
+static const ImVec4 kRedHov  = {0.88f, 0.08f, 0.08f, 1.00f};  /* 高亮红  Hover   */
+static const ImVec4 kRedDark = {0.60f, 0.04f, 0.04f, 1.00f};  /* 深压红  Active  */
+static const ImVec4 kRedDim  = {0.76f, 0.05f, 0.05f, 0.65f};  /* 半透红  系统消息 */
+static const ImVec4 kWhite   = {1.00f, 1.00f, 1.00f, 1.00f};  /* 白色    按钮文字 */
+static const ImVec4 kGray    = {0.46f, 0.46f, 0.46f, 1.00f};  /* 次要灰  */
+
+/* ------------------------------------------------------------------ */
+/*  根据消息前缀选色并渲染一行聊天文本                                  */
+/* ------------------------------------------------------------------ */
+static void RenderChatLine(const std::string& line)
+{
+    /* UTF-8 前缀匹配：[系统] / [你] / 其他 */
+    if (line.compare(0, 7, "[系统]") == 0) {          /* "[系统]" = 7 bytes UTF-8 */
+        ImGui::TextColored(kRedDim, "%s", line.c_str());
+    } else if (line.compare(0, 5, "[你]") == 0) {     /* "[你]"  = 5 bytes UTF-8  */
+        ImGui::TextColored(kRedDark, "%s", line.c_str());
+    } else {
+        ImGui::TextUnformatted(line.c_str());
+    }
+}
+
+/* ================================================================== */
+
 ChatUI::ChatUI()
 {
     AppendMsg("[系统] 请输入昵称并点击 Join 加入聊天室");
@@ -17,7 +44,6 @@ void ChatUI::Render(ChatNetworkClient& net)
 {
     HandleIncoming(net);
 
-    /* 全屏主窗口，无边距、无移动 */
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(io.DisplaySize);
@@ -28,20 +54,19 @@ void ChatUI::Render(ChatNetworkClient& net)
         ImGuiWindowFlags_NoScrollbar);
 
     RenderLoginBar(net);
+
+    /* 红色分隔线（颜色由 XML Separator 控制） */
     ImGui::Separator();
 
-    /* 双列布局：左=玩家列表，右=聊天区 */
-    float list_width = 160.0f;
     RenderPlayerList();
     ImGui::SameLine();
     RenderChatArea(net);
 
-    (void)list_width;
     ImGui::End();
 }
 
 /* ------------------------------------------------------------------ */
-/*  处理网络消息，更新 players_ / messages_                            */
+/*  处理网络消息                                                        */
 /* ------------------------------------------------------------------ */
 void ChatUI::HandleIncoming(ChatNetworkClient& net)
 {
@@ -54,11 +79,9 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
     for (auto& m : msgs) {
         switch (m.type) {
         case MSG_PLAYER_LIST: {
-            /* 初始在线列表：重置 players_ */
             players_ = ParsePlayerList(m.body);
             char buf[128];
-            snprintf(buf, sizeof(buf), "[系统] 当前在线 %zu 人",
-                     players_.size());
+            snprintf(buf, sizeof(buf), "[系统] 当前在线 %zu 人", players_.size());
             AppendMsg(buf);
             break;
         }
@@ -75,11 +98,9 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
             AppendMsg("[系统] " + nick + " 离开聊天室");
             break;
         }
-        case MSG_CHAT: {
-            /* 服务器广播来的聊天，格式：body 就是原文 */
+        case MSG_CHAT:
             AppendMsg("[他人] " + m.body);
             break;
-        }
         default:
             break;
         }
@@ -87,12 +108,13 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
 }
 
 /* ------------------------------------------------------------------ */
-/*  顶部登录栏（未加入时）/ 状态栏（已加入时）                         */
+/*  顶部栏：昵称输入 / 在线状态                                         */
 /* ------------------------------------------------------------------ */
 void ChatUI::RenderLoginBar(ChatNetworkClient& net)
 {
     if (!joined_) {
-        ImGui::Text("昵称:");
+        /* "昵称:" 标签 → 红色 */
+        ImGui::TextColored(kRed, "昵称:");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(160.0f);
         ImGui::InputText("##nick", nick_buf_, sizeof(nick_buf_));
@@ -100,28 +122,42 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
 
         bool can_join = net.IsConnected() && nick_buf_[0] != '\0';
         if (!can_join) ImGui::BeginDisabled();
+
+        /* Join 按钮：红底白字 */
+        ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
         if (ImGui::Button("Join")) {
             net.SendJoin(nick_buf_);
-            /* 将自己加入玩家列表 */
             players_.push_back(std::string(nick_buf_) + " (你)");
             AppendMsg(std::string("[系统] 你以昵称 \"") + nick_buf_ + "\" 加入聊天室");
             joined_ = true;
             focus_input_ = true;
         }
+        ImGui::PopStyleColor();
+
         if (!can_join) ImGui::EndDisabled();
 
         if (!net.IsConnected()) {
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1,0.3f,0.3f,1), "未连接");
+            ImGui::TextColored(kRedHov, "● 未连接");
+        } else {
+            ImGui::SameLine();
+            ImGui::TextColored(kGray, "● 已连接");
         }
     } else {
-        ImGui::Text("在线聊天中  昵称: %s", nick_buf_);
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60);
+        /* 已加入：昵称用红色高亮 */
+        ImGui::TextColored(kGray, "在线聊天中   昵称:");
+        ImGui::SameLine();
+        ImGui::TextColored(kRed, "%s", nick_buf_);
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70);
+
+        /* Leave 按钮：红底白字 */
+        ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
         if (ImGui::Button("Leave")) {
             net.SendLeave(nick_buf_);
             joined_ = false;
             AppendMsg("[系统] 你已离开聊天室");
         }
+        ImGui::PopStyleColor();
     }
 }
 
@@ -131,15 +167,25 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
 void ChatUI::RenderPlayerList()
 {
     float avail_h = ImGui::GetContentRegionAvail().y;
-    ImGui::BeginChild("##playerlist", ImVec2(155, avail_h), true);
-    /* TextDisabled 不解析 ###，直接格式化显示 */
-    ImGui::TextDisabled("在线 (%zu)", players_.size());
+    ImGui::BeginChild("##playerlist", ImVec2(158, avail_h), true);
+
+    /* 标题：红色 + 计数 */
+    ImGui::TextColored(kRed, "在线玩家");
+    ImGui::SameLine();
+    ImGui::TextColored(kGray, "(%zu)", players_.size());
+
+    /* 红色分隔线 */
     ImGui::Separator();
+
+    /* 玩家列表：红色子弹点 + 默认文字 */
     for (auto& p : players_) {
+        ImGui::PushStyleColor(ImGuiCol_Text, kRed);
         ImGui::Bullet();
+        ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::TextUnformatted(p.c_str());
     }
+
     ImGui::EndChild();
 }
 
@@ -150,15 +196,14 @@ void ChatUI::RenderChatArea(ChatNetworkClient& net)
 {
     float avail_w = ImGui::GetContentRegionAvail().x;
     float avail_h = ImGui::GetContentRegionAvail().y;
-    float input_h = ImGui::GetFrameHeightWithSpacing() + 4;
+    float input_h = ImGui::GetFrameHeightWithSpacing() + 6;
 
     /* 聊天历史滚动区 */
     ImGui::BeginChild("##chat_scroll",
                       ImVec2(avail_w, avail_h - input_h),
-                      true,
-                      ImGuiWindowFlags_HorizontalScrollbar);
+                      true);
     for (auto& line : messages_) {
-        ImGui::TextUnformatted(line.c_str());
+        RenderChatLine(line);
     }
     if (scroll_bottom_) {
         ImGui::SetScrollHereY(1.0f);
@@ -166,12 +211,12 @@ void ChatUI::RenderChatArea(ChatNetworkClient& net)
     }
     ImGui::EndChild();
 
-    /* 输入框 + 发送按钮 */
+    /* 输入框 + Send 按钮 */
     if (focus_input_) {
         ImGui::SetKeyboardFocusHere();
         focus_input_ = false;
     }
-    ImGui::SetNextItemWidth(avail_w - 70);
+    ImGui::SetNextItemWidth(avail_w - 74);
     bool enter_pressed = ImGui::InputText(
         "##chatinput", chat_buf_, sizeof(chat_buf_),
         ImGuiInputTextFlags_EnterReturnsTrue);
@@ -179,9 +224,14 @@ void ChatUI::RenderChatArea(ChatNetworkClient& net)
 
     bool can_send = joined_ && net.IsConnected() && chat_buf_[0] != '\0';
     if (!can_send) ImGui::BeginDisabled();
+
+    /* Send 按钮：红底白字 */
+    ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
     if (ImGui::Button("Send") || (enter_pressed && can_send)) {
         TrySendChat(net);
     }
+    ImGui::PopStyleColor();
+
     if (!can_send) ImGui::EndDisabled();
 }
 
@@ -192,7 +242,6 @@ void ChatUI::AppendMsg(const std::string& line)
 {
     messages_.push_back(line);
     scroll_bottom_ = true;
-    /* 防止历史无限增长 */
     if (messages_.size() > 500)
         messages_.erase(messages_.begin());
 }
@@ -207,7 +256,6 @@ void ChatUI::TrySendChat(ChatNetworkClient& net)
     focus_input_  = true;
 }
 
-/* 解析 MSG_PLAYER_LIST body → vector<string> */
 std::vector<std::string> ChatUI::ParsePlayerList(const std::string& body)
 {
     std::vector<std::string> result;

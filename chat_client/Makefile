@@ -11,9 +11,9 @@ IMGUI_SRC = \
     $(IMGUI_DIR)/backends/imgui_impl_opengl3.cpp
 
 INCS = -I$(IMGUI_DIR) -I$(IMGUI_DIR)/backends -I..
-LIBS = -lglfw -lGL -lpthread -ldl
+LIBS = -lglfw -lGL -lpthread -ldl -ltinyxml2
 
-SRCS = main.cpp ChatNetworkClient.cpp ChatUI.cpp $(IMGUI_SRC)
+SRCS = main.cpp ChatNetworkClient.cpp ChatUI.cpp ImGuiThemeLoader.cpp $(IMGUI_SRC)
 
 TARGET = chat_client
 

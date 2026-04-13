@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  GameChat ImGui 主题 — 网易云风格红白配色
+  设计原则：
+    背景族  → 纯白 / 浅灰（不带任何红色通道，避免粉色感）
+    红色族  → 饱和实心红，只出现在 Chrome 元素（标题栏/按钮/激活态/滚动条）
+    文字    → 近黑高对比
+
+  色板：
+    品牌红  #C20C0C  r=0.76 g=0.05 b=0.05   （主色，不透明）
+    高亮红  #E01515  r=0.88 g=0.08 b=0.08   （Hover）
+    深压红  #9A0A0A  r=0.60 g=0.04 b=0.04   （Active/Pressed）
+    纯白    #FFFFFF  r=1.00 g=1.00 b=1.00
+    面板灰  #F5F5F5  r=0.96 g=0.96 b=0.96
+    控件灰  #E8E8E8  r=0.91 g=0.91 b=0.91
+    边框灰  #D0D0D0  r=0.82 g=0.82 b=0.82
+    正文黑  #212121  r=0.13 g=0.13 b=0.13
+    次要灰  #757575  r=0.46 g=0.46 b=0.46
+-->
+<theme name="NeteaseRedWhite">
+
+  <!-- ============ 风格参数 ============ -->
+  <style>
+    <float name="WindowRounding"    value="6.0"/>
+    <float name="ChildRounding"     value="4.0"/>
+    <float name="FrameRounding"     value="4.0"/>
+    <float name="PopupRounding"     value="4.0"/>
+    <float name="ScrollbarRounding" value="6.0"/>
+    <float name="GrabRounding"      value="6.0"/>
+    <float name="TabRounding"       value="4.0"/>
+    <float name="WindowBorderSize"  value="0.0"/>
+    <float name="FrameBorderSize"   value="1.0"/>
+    <float name="ScrollbarSize"     value="10.0"/>
+    <float name="GrabMinSize"       value="10.0"/>
+  </style>
+
+  <!-- ============ 颜色 ============ -->
+  <colors>
+
+    <!-- ── 文字 ────────────────────────────────── -->
+    <color name="Text"         r="0.13" g="0.13" b="0.13" a="1.00"/>
+    <color name="TextDisabled" r="0.46" g="0.46" b="0.46" a="1.00"/>
+
+    <!-- ── 窗口背景：纯白 ──────────────────────── -->
+    <color name="WindowBg"  r="1.00" g="1.00" b="1.00" a="1.00"/>
+    <color name="ChildBg"   r="0.96" g="0.96" b="0.96" a="1.00"/>
+    <color name="PopupBg"   r="1.00" g="1.00" b="1.00" a="1.00"/>
+
+    <!-- ── 边框：红调，让面板/输入框轮廓带红 ─── -->
+    <color name="Border"       r="0.76" g="0.05" b="0.05" a="0.40"/>
+    <color name="BorderShadow" r="0.00" g="0.00" b="0.00" a="0.00"/>
+
+    <!-- ── 输入框/帧：浅灰 ────────────────────── -->
+    <color name="FrameBg"        r="0.91" g="0.91" b="0.91" a="1.00"/>
+    <color name="FrameBgHovered" r="0.85" g="0.85" b="0.85" a="1.00"/>
+    <color name="FrameBgActive"  r="0.78" g="0.78" b="0.78" a="1.00"/>
+
+    <!-- ── 标题栏：全部实心品牌红 ─────────────── -->
+    <color name="TitleBg"          r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="TitleBgActive"    r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="TitleBgCollapsed" r="0.60" g="0.04" b="0.04" a="1.00"/>
+
+    <!-- ── 顶部栏：红色（模拟网易云顶栏）──────── -->
+    <color name="MenuBarBg" r="0.76" g="0.05" b="0.05" a="1.00"/>
+
+    <!-- ── 滚动条：灰轨 + 红滑块 ─────────────── -->
+    <color name="ScrollbarBg"          r="0.96" g="0.96" b="0.96" a="1.00"/>
+    <color name="ScrollbarGrab"        r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="ScrollbarGrabHovered" r="0.88" g="0.08" b="0.08" a="1.00"/>
+    <color name="ScrollbarGrabActive"  r="0.60" g="0.04" b="0.04" a="1.00"/>
+
+    <!-- ── 勾选 / 滑块：实心红 ────────────────── -->
+    <color name="CheckMark"        r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="SliderGrab"       r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="SliderGrabActive" r="0.60" g="0.04" b="0.04" a="1.00"/>
+
+    <!-- ── 按钮：实心红，Hover/Active 深浅变化 ── -->
+    <color name="Button"        r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="ButtonHovered" r="0.88" g="0.08" b="0.08" a="1.00"/>
+    <color name="ButtonActive"  r="0.60" g="0.04" b="0.04" a="1.00"/>
+
+    <!-- ── 列表/树节点头：灰底，Hover/Active 变红 -->
+    <color name="Header"        r="0.91" g="0.91" b="0.91" a="1.00"/>
+    <color name="HeaderHovered" r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="HeaderActive"  r="0.60" g="0.04" b="0.04" a="1.00"/>
+
+    <!-- ── 分隔线：始终红色（网易云顶栏下红线感） -->
+    <color name="Separator"        r="0.76" g="0.05" b="0.05" a="0.70"/>
+    <color name="SeparatorHovered" r="0.88" g="0.08" b="0.08" a="1.00"/>
+    <color name="SeparatorActive"  r="0.60" g="0.04" b="0.04" a="1.00"/>
+
+    <!-- ── 缩放把手 ────────────────────────────── -->
+    <color name="ResizeGrip"        r="0.76" g="0.05" b="0.05" a="0.25"/>
+    <color name="ResizeGripHovered" r="0.88" g="0.08" b="0.08" a="0.70"/>
+    <color name="ResizeGripActive"  r="0.60" g="0.04" b="0.04" a="1.00"/>
+
+    <!-- ── 标签页：灰底非激活，红色激活 ─────── -->
+    <color name="Tab"               r="0.91" g="0.91" b="0.91" a="1.00"/>
+    <color name="TabHovered"        r="0.88" g="0.08" b="0.08" a="1.00"/>
+    <color name="TabActive"         r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="TabUnfocused"      r="0.91" g="0.91" b="0.91" a="0.80"/>
+    <color name="TabUnfocusedActive" r="0.82" g="0.82" b="0.82" a="1.00"/>
+
+    <!-- ── 图表 ─────────────────────────────────  -->
+    <color name="PlotLines"            r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="PlotLinesHovered"     r="0.88" g="0.08" b="0.08" a="1.00"/>
+    <color name="PlotHistogram"        r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="PlotHistogramHovered" r="0.88" g="0.08" b="0.08" a="1.00"/>
+
+    <!-- ── 表格 ─────────────────────────────────  -->
+    <color name="TableHeaderBg"     r="0.91" g="0.91" b="0.91" a="1.00"/>
+    <color name="TableBorderStrong" r="0.76" g="0.05" b="0.05" a="0.60"/>
+    <color name="TableBorderLight"  r="0.82" g="0.82" b="0.82" a="1.00"/>
+    <color name="TableRowBg"        r="0.00" g="0.00" b="0.00" a="0.00"/>
+    <color name="TableRowBgAlt"     r="0.96" g="0.96" b="0.96" a="1.00"/>
+
+    <!-- ── 其他 ─────────────────────────────────  -->
+    <color name="TextSelectedBg"         r="0.76" g="0.05" b="0.05" a="0.30"/>
+    <color name="DragDropTarget"         r="0.76" g="0.05" b="0.05" a="0.90"/>
+    <color name="NavHighlight"           r="0.76" g="0.05" b="0.05" a="1.00"/>
+    <color name="NavWindowingHighlight"  r="1.00" g="1.00" b="1.00" a="0.70"/>
+    <color name="NavWindowingDimBg"      r="0.20" g="0.20" b="0.20" a="0.20"/>
+    <color name="ModalWindowDimBg"       r="0.20" g="0.20" b="0.20" a="0.35"/>
+
+  </colors>
+
+</theme>

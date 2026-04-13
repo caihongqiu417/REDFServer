@@ -7,6 +7,7 @@
 
 #include "ChatNetworkClient.h"
 #include "ChatUI.h"
+#include "ImGuiThemeLoader.h"
 
 /* 服务器地址（可改为命令行参数） */
 static const char* SERVER_HOST = "127.0.0.1";
@@ -31,7 +32,7 @@ int main(int argc, char** argv)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 
-    GLFWwindow* window = glfwCreateWindow(900, 600, "GameChat", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(960, 640, "REDF GameChat", nullptr, nullptr);
     if (!window) { glfwTerminate(); return 1; }
 
     glfwMakeContextCurrent(window);
@@ -60,7 +61,7 @@ int main(int argc, char** argv)
         const char* font_path =
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc";
         ImFont* font = io2.Fonts->AddFontFromFileTTF(
-            font_path, 16.0f, nullptr, ranges);
+            font_path, 19.0f, nullptr, ranges);
         if (!font) {
             fprintf(stderr, "[main] 警告: 加载 CJK 字体失败，中文将显示为方块\n");
             io2.Fonts->AddFontDefault();
@@ -69,6 +70,10 @@ int main(int argc, char** argv)
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init(glsl_version);
+
+    /* ---- 从 XML 加载红白主题（在字体构建之后，首帧之前） ---- */
+    if (!LoadImGuiTheme("theme_red_white.xml"))
+        fprintf(stderr, "[main] 主题加载失败，使用 ImGui 默认样式\n");
 
     /* ---- 网络 + UI 对象 ---- */
     ChatNetworkClient net;
