@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <cstdint>
 #include "ChatNetworkClient.h"
 
 class ChatUI {
@@ -13,12 +14,24 @@ public:
     /* 返回 true 表示用户点了退出按钮 */
     bool WantsQuit() const { return wants_quit_; }
 
+    /* 传入三张图标的 OpenGL 纹理 ID */
+    void SetIcons(unsigned int world, unsigned int friend_icon, unsigned int private_icon);
+
 private:
     /* ================================================================
      * 界面状态
      * ================================================================ */
-    enum class UiState { LOGIN, WAITING, CHAT };   // 当前界面：登录页 / 等待连接 / 聊天室
-    UiState ui_state_ = UiState::LOGIN;            // 初始显示登录界面
+    enum class UiState { LOGIN, WAITING, CHAT };
+    UiState ui_state_ = UiState::LOGIN;
+
+    /* 左侧导航栏当前选中的功能 */
+    enum class MainTab { WORLD, FRIENDS, PRIVATE };
+    MainTab main_tab_ = MainTab::WORLD;
+
+    /* 图标纹理 ID（OpenGL GLuint，用 unsigned int 避免引入 GL 头文件） */
+    unsigned int icon_world_   = 0;
+    unsigned int icon_friend_  = 0;
+    unsigned int icon_private_ = 0;
 
     bool  joined_        = false;                  // 是否已发送 MSG_JOIN
     bool  wants_quit_    = false;                  // 用户是否点了退出
@@ -42,10 +55,11 @@ private:
      * 渲染子函数
      * ================================================================ */
     void RenderLoginPage(ChatNetworkClient& net);
-    void HandleIncoming(ChatNetworkClient& net);    // 处理服务器发来的消息，更新 messages_ / players_
-    void RenderLoginBar(ChatNetworkClient& net);    // 渲染顶栏：登录/注册按钮 + 输入框 + 错误提示
-    void RenderPlayerList();                        // 渲染侧边栏：在线玩家列表
-    void RenderChatArea(ChatNetworkClient& net);    // 渲染主区域：聊天记录 + 输入框
+    void HandleIncoming(ChatNetworkClient& net);
+    void RenderNavSidebar();                        // 左侧竖向图标导航栏
+    void RenderLoginBar(ChatNetworkClient& net);
+    void RenderPlayerList();
+    void RenderChatArea(ChatNetworkClient& net);
 
     /* ================================================================
      * 工具函数

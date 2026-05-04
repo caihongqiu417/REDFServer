@@ -8,6 +8,22 @@
 #include "ChatNetworkClient.h"
 #include "ChatUI.h"
 #include "ImGuiThemeLoader.h"
+#include "Icon/World_data.h"
+#include "Icon/Friend_data.h"
+#include "Icon/PrivateChat_data.h"
+
+static GLuint CreateTexture(const unsigned char* data, int w, int h)
+{
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    return tex;
+}
 
 /* 服务器地址（可改为命令行参数） */
 static const char* SERVER_HOST = "127.0.0.1";
@@ -75,9 +91,15 @@ int main(int argc, char** argv)
     if (!LoadImGuiTheme("theme_red_white.xml"))
         fprintf(stderr, "[main] 主题加载失败，使用 ImGui 默认样式\n");
 
+    /* ---- 加载图标纹理（OpenGL 上下文已就绪） ---- */
+    GLuint icon_world   = CreateTexture(world_icon_rgba,        world_icon_width,        world_icon_height);
+    GLuint icon_friend  = CreateTexture(friend_icon_rgba,       friend_icon_width,       friend_icon_height);
+    GLuint icon_private = CreateTexture(private_chat_icon_rgba, private_chat_icon_width, private_chat_icon_height);
+
     /* ---- 网络 + UI 对象 ---- */
     ChatNetworkClient net;
     ChatUI            ui;
+    ui.SetIcons(icon_world, icon_friend, icon_private);
 
     printf("[main] 正在连接到 %s:%u ...\n", SERVER_HOST, SERVER_PORT);
     if (!net.Connect(SERVER_HOST, SERVER_PORT))
@@ -105,6 +127,9 @@ int main(int argc, char** argv)
 
     /* ---- 清理 ---- */
     net.Disconnect();
+    glDeleteTextures(1, &icon_world);
+    glDeleteTextures(1, &icon_friend);
+    glDeleteTextures(1, &icon_private);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

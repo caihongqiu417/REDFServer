@@ -59,13 +59,33 @@ void ChatUI::Render(ChatNetworkClient& net)
 
     /* 3. 根据当前状态显示不同界面 */
     if (ui_state_ == UiState::LOGIN || ui_state_ == UiState::WAITING) {
-        RenderLoginPage(net);                       // 未登录 → 全屏登录/注册页
+        RenderLoginPage(net);
     } else {
-        RenderLoginBar(net);                        // 顶栏：用户名 + 重登录/退出按钮
-        ImGui::Separator();                         // 水平分割线
-        RenderPlayerList();                         // 左侧：在线玩家列表
-        ImGui::SameLine();                          // 不换行，接着在右侧绘制
-        RenderChatArea(net);                        // 右侧：聊天记录 + 输入框
+        /* 左侧固定宽度的图标导航栏 */
+        ImGui::BeginChild("##navsidebar", ImVec2(64.0f, -1), false);
+        RenderNavSidebar();
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        /* 右侧内容区（剩余全部宽度） */
+        ImGui::BeginChild("##maincontent", ImVec2(-1, -1), false);
+        if (main_tab_ == MainTab::WORLD) {
+            RenderLoginBar(net);
+            ImGui::Separator();
+            RenderPlayerList();
+            ImGui::SameLine();
+            RenderChatArea(net);
+        } else {
+            /* 好友 / 私聊功能占位 */
+            float h = ImGui::GetContentRegionAvail().y;
+            ImGui::SetCursorPosY(h * 0.45f);
+            const char* tip = (main_tab_ == MainTab::FRIENDS) ? "好友功能即将上线..." : "私聊功能即将上线...";
+            float tw = ImGui::CalcTextSize(tip).x;
+            ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - tw) * 0.5f);
+            ImGui::TextColored(kGray, "%s", tip);
+        }
+        ImGui::EndChild();
     }
 
     /* 4. 结束本帧绘制 */
@@ -286,6 +306,78 @@ void ChatUI::RenderChatArea(ChatNetworkClient& net)
         TrySendChat(net);
     }
     ImGui::PopStyleColor();
+}
+
+/* ------------------------------------------------------------------ */
+/*  图标设置                                                            */
+/* ------------------------------------------------------------------ */
+void ChatUI::SetIcons(unsigned int world, unsigned int friend_icon, unsigned int private_icon)
+{
+    icon_world_   = world;
+    icon_friend_  = friend_icon;
+    icon_private_ = private_icon;
+}
+
+/* ------------------------------------------------------------------ */
+/*  左侧导航栏                                                          */
+/* ------------------------------------------------------------------ */
+void ChatUI::RenderNavSidebar()
+{
+    const float radius   = 20.0f;   /* 圆圈半径 */
+    const float icon_sz  = 26.0f;   /* 图标显示尺寸（正方形边长） */
+    const float sidebar_w = 64.0f;
+    const float cx = sidebar_w * 0.5f;   /* 水平中心 */
+
+    struct TabDef { MainTab tab; unsigned int* tex; const char* tip; };
+    TabDef tabs[] = {
+        { MainTab::WORLD,   &icon_world_,   "世界" },
+        { MainTab::FRIENDS, &icon_friend_,  "好友" },
+        { MainTab::PRIVATE, &icon_private_, "私聊" },
+    };
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 win_pos  = ImGui::GetWindowPos();
+
+    float cursor_y = 14.0f;
+    for (auto& t : tabs) {
+        bool active = (main_tab_ == t.tab);
+
+        /* 用 InvisibleButton 捕捉点击/悬停 */
+        ImGui::SetCursorPos(ImVec2(cx - radius, cursor_y));
+        char id[32];
+        snprintf(id, sizeof(id), "##nav_%d", (int)t.tab);
+        ImGui::InvisibleButton(id, ImVec2(radius * 2.0f, radius * 2.0f));
+        bool clicked = ImGui::IsItemClicked();
+        bool hovered = ImGui::IsItemHovered();
+        if (clicked) main_tab_ = t.tab;
+        if (hovered) ImGui::SetTooltip("%s", t.tip);
+
+        /* 圆圈中心（屏幕坐标） */
+        ImVec2 center = { win_pos.x + cx, win_pos.y + cursor_y + radius };
+
+        /* 圆圈颜色：选中→红，悬停→浅红，默认→灰 */
+        ImU32 ring_col;
+        float thickness;
+        if (active) {
+            ring_col  = IM_COL32(194, 13, 13, 230);
+            thickness = 2.0f;
+        } else if (hovered) {
+            ring_col  = IM_COL32(220, 80, 80, 180);
+            thickness = 1.5f;
+        } else {
+            ring_col  = IM_COL32(140, 140, 140, 130);
+            thickness = 1.5f;
+        }
+        dl->AddCircle(center, radius, ring_col, 48, thickness);
+
+        /* 图标居中绘制（屏幕坐标） */
+        float half = icon_sz * 0.5f;
+        ImVec2 icon_min = { center.x - half, center.y - half };
+        ImVec2 icon_max = { center.x + half, center.y + half };
+        dl->AddImage((void*)(uintptr_t)(*t.tex), icon_min, icon_max);
+
+        cursor_y += radius * 2.0f + 12.0f;   /* 下一个图标的起始 y */
+    }
 }
 
 /* ------------------------------------------------------------------ */
