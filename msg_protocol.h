@@ -45,6 +45,10 @@ typedef enum : uint16_t {
     MSG_PROFILE_RSP     = 18, /* 服务器→客户端：登录后推送已保存的昵称和头像序号，body = MsgProfileData (68B) */
     MSG_PROFILE_SET_REQ = 19, /* 客户端→服务器：保存主页改动，body = MsgProfileData (68B) */
     MSG_PROFILE_SET_RSP = 20, /* 服务器→客户端：保存结果，body = MsgLoginRsp (64B，复用 result+reason) */
+
+    /* -------- 私聊 -------- */
+    MSG_PM_REQ  = 21, /* 客户端→服务器：私聊请求，body = MsgPMReq  (480B) */
+    MSG_PM_RECV = 22, /* 服务器→客户端：私聊投递，body = MsgPMRecv (545B) */
 } MsgType;
 
 
@@ -92,6 +96,32 @@ typedef struct {
 
 static_assert(sizeof(MsgProfileData) == 68, "MsgProfileData size mismatch");
 /* MSG_PROFILE_SET_RSP 的 body 直接复用 MsgLoginRsp（result + reason） */
+
+/* ------------------------------------------------------------------ */
+/*  私聊消息结构                                                        */
+/* ------------------------------------------------------------------ */
+#define MSG_PM_TEXT_LEN 448
+
+/* 客户端→服务器：私聊请求 (480 字节) */
+#pragma pack(push, 1)
+typedef struct {
+    char target_username[MSG_LOGIN_USERNAME_LEN];  /* 目标账号名，32B */
+    char text[MSG_PM_TEXT_LEN];                    /* 消息正文，448B */
+} MsgPMReq;
+#pragma pack(pop)
+static_assert(sizeof(MsgPMReq) == 480, "MsgPMReq size mismatch");
+
+/* 服务器→客户端：私聊投递 (546 字节) */
+#pragma pack(push, 1)
+typedef struct {
+    uint8_t is_echo;                                  /* 1=发送方的历史副本，客户端按 SELF 渲染 */
+    uint8_t avatar_idx;                               /* 发送者头像序号 */
+    char    sender_username[MSG_LOGIN_USERNAME_LEN];  /* 发送者账号名（echo 时存对方账号名，用于归档到正确会话） */
+    char    sender_nick[MSG_PROFILE_NICK_LEN];        /* 发送者昵称 */
+    char    text[MSG_PM_TEXT_LEN];                    /* 消息正文 */
+} MsgPMRecv;
+#pragma pack(pop)
+static_assert(sizeof(MsgPMRecv) == 546, "MsgPMRecv size mismatch");
 
 
 

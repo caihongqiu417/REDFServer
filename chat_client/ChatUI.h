@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <map>
 #include <cstdint>
 #include "ChatNetworkClient.h"
 
@@ -8,7 +9,13 @@ struct ChatLine {
     enum class Kind { SYSTEM, SELF, OTHER } kind = Kind::SYSTEM;
     std::string nick;
     std::string text;
+    std::string sender_username;   // OTHER 消息才有，用于点头像发起私聊
     int avatar_idx = -1;
+};
+
+struct PlayerInfo {
+    std::string username;
+    std::string nick;
 };
 
 class ChatUI {
@@ -77,8 +84,16 @@ private:
     char  nick_buf_[64]  = "Player";               // 聊天界面：昵称输入框，默认 "Player"
     char  chat_buf_[512] = {};                     // 聊天界面：消息输入框
 
-    std::vector<ChatLine> messages_;                  // 聊天历史
-    std::vector<std::string> players_;              // 在线玩家列表（昵称或 IP:Port）
+    std::vector<ChatLine>    messages_;              // 世界频道聊天历史
+    std::vector<PlayerInfo>  players_;              // 在线玩家列表
+
+    /* 私聊状态 */
+    std::string pm_target_uname_;
+    std::string pm_target_nick_;
+    std::map<std::string, std::vector<ChatLine>> pm_logs_;
+    std::map<std::string, std::string>           pm_nicks_;
+    std::map<std::string, int>                   pm_unread_;
+    char pm_buf_[512] = {};
 
     /* ================================================================
      * 渲染子函数
@@ -94,9 +109,12 @@ private:
     /* ================================================================
      * 工具函数
      * ================================================================ */
-    void AppendMsg(const std::string& line);         // 追加系统消息
-    void AppendChat(const std::string& nick, const std::string& text, int av, bool is_self); // 追加聊天消息
-    void RenderChatMsg(const ChatLine& msg);          // 渲染单条消息（头像 + 昵称 + 文本）
-    static std::vector<std::string> ParsePlayerList(const std::string& body);
+    void AppendMsg(const std::string& line);
+    void AppendChat(const std::string& nick, const std::string& text,
+                    int av, bool is_self, const std::string& sender_username = "");
+    void RenderChatMsg(const ChatLine& msg);
+    static std::vector<PlayerInfo> ParsePlayerList(const std::string& body);
     void TrySendChat(ChatNetworkClient& net);
+    void TrySendPM(ChatNetworkClient& net);
+    void RenderPMTab(ChatNetworkClient& net);
 };

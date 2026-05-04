@@ -1,5 +1,7 @@
 #include "UserDatabase.h"
 #include <cstdio>
+#include <cstring>
+#include <ctime>
 
 UserDatabase::UserDatabase() 
     : db_(nullptr)
@@ -48,9 +50,37 @@ bool UserDatabase::Open(const std::string& db_path)
      * 这样无论是新建数据库还是旧数据库升级，都能正常运行。*/
     sqlite3_exec(db_,
         "ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT ''",
-        nullptr, nullptr, nullptr);   /* 忽略返回值（列已存在时会失败，属正常） */
+        nullptr, nullptr, nullptr);
     sqlite3_exec(db_,
         "ALTER TABLE users ADD COLUMN avatar_idx INTEGER DEFAULT 0",
+        nullptr, nullptr, nullptr);
+
+    /* offline_msgs：对方不在线时把私聊消息存这里，下次登录一起推过去。
+     * id 自增，查询时按 id 排序，保证投递顺序和发送顺序一致。
+     * sent_at 存 unix 时间戳，以后客户端想显示"昨天 14:32"之类可以用。
+     * 每个字段都对应 MsgPMRecv 里的一个成员，取出时直接填回去。*/
+    const char* offline_sql =
+        "CREATE TABLE IF NOT EXISTS offline_msgs ("
+        "  id              INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  target_username TEXT    NOT NULL,"
+        "  sender_username TEXT    NOT NULL,"
+        "  sender_nick     TEXT    NOT NULL,"
+        "  sender_avatar   INTEGER NOT NULL DEFAULT 0,"
+        "  text            TEXT    NOT NULL,"
+        "  sent_at         INTEGER NOT NULL,"
+        "  is_echo         INTEGER NOT NULL DEFAULT 0"
+        ");";
+
+    if (sqlite3_exec(db_, offline_sql, nullptr, nullptr, &errmsg) != SQLITE_OK) {
+        fprintf(stderr, "[UserDB] 建离线消息表失败: %s\n", errmsg);
+        sqlite3_free(errmsg);
+        return false;
+    }
+
+    /* 按 target + id 建索引，登录时捞消息只扫目标用户的行，不全表扫 */
+    sqlite3_exec(db_,
+        "CREATE INDEX IF NOT EXISTS idx_offline_target "
+        "ON offline_msgs (target_username, id);",
         nullptr, nullptr, nullptr);
 
     fprintf(stdout, "[UserDB] 数据库已就绪: %s\n", db_path.c_str());
@@ -159,4 +189,94 @@ void UserDatabase::Close() {
         sqlite3_close(db_);
         db_ = nullptr;
     }
+}
+
+void UserDatabase::StoreOfflineMsg(const std::string& target_username,
+                                   const MsgPMRecv& msg, bool is_echo)
+{
+    /* 旧数据库没有 is_echo 列，加上去，已有则忽略 */
+    sqlite3_exec(db_,
+        "ALTER TABLE offline_msgs ADD COLUMN is_echo INTEGER NOT NULL DEFAULT 0",
+        nullptr, nullptr, nullptr);
+
+    const char* sql =
+        "INSERT INTO offline_msgs "
+        "(target_username, sender_username, sender_nick, sender_avatar, text, sent_at, is_echo) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?);";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        fprintf(stderr, "[UserDB] StoreOfflineMsg 编译SQL失败: %s\n",
+                sqlite3_errmsg(db_));
+        return;
+    }
+
+    sqlite3_bind_text (stmt, 1, target_username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text (stmt, 2, msg.sender_username,     -1, SQLITE_STATIC);
+    sqlite3_bind_text (stmt, 3, msg.sender_nick,         -1, SQLITE_STATIC);
+    sqlite3_bind_int  (stmt, 4, msg.avatar_idx);
+    sqlite3_bind_text (stmt, 5, msg.text,                -1, SQLITE_STATIC);
+    sqlite3_bind_int64(stmt, 6, (sqlite3_int64)time(nullptr));
+    sqlite3_bind_int  (stmt, 7, is_echo ? 1 : 0);
+
+    if (sqlite3_step(stmt) != SQLITE_DONE)
+        fprintf(stderr, "[UserDB] StoreOfflineMsg 写入失败: %s\n",
+                sqlite3_errmsg(db_));
+
+    sqlite3_finalize(stmt);
+}
+
+std::vector<MsgPMRecv> UserDatabase::PopOfflineMsgs(const std::string& username)
+{
+    std::vector<MsgPMRecv> result;
+
+    /* 先把这个人的离线消息全读出来，is_echo 一起取回来 */
+    const char* sel_sql =
+        "SELECT sender_username, sender_nick, sender_avatar, text, is_echo "
+        "FROM offline_msgs "
+        "WHERE target_username = ? "
+        "ORDER BY id ASC;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sel_sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        fprintf(stderr, "[UserDB] PopOfflineMsgs 编译SELECT失败\n");
+        return result;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        MsgPMRecv msg{};
+
+        auto col_str = [&](int col) -> const char* {
+            const unsigned char* p = sqlite3_column_text(stmt, col);
+            return p ? reinterpret_cast<const char*>(p) : "";
+        };
+
+        strncpy(msg.sender_username, col_str(0), sizeof(msg.sender_username) - 1);
+        strncpy(msg.sender_nick,     col_str(1), sizeof(msg.sender_nick)     - 1);
+        msg.avatar_idx = (uint8_t)sqlite3_column_int(stmt, 2);
+        strncpy(msg.text,            col_str(3), sizeof(msg.text)            - 1);
+        msg.is_echo    = (uint8_t)sqlite3_column_int(stmt, 4);
+
+        result.push_back(msg);
+    }
+    sqlite3_finalize(stmt);
+
+    if (result.empty())
+        return result;   /* 没有离线消息，跳过后面的删除 */
+
+    /* 读完之后从库里删掉，防止下次登录重复投递 */
+    const char* del_sql =
+        "DELETE FROM offline_msgs WHERE target_username = ?;";
+
+    sqlite3_stmt* del_stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, del_sql, -1, &del_stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(del_stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(del_stmt);
+        sqlite3_finalize(del_stmt);
+    }
+
+    printf("[UserDB] 向 %s 投递 %zu 条离线消息\n", username.c_str(), result.size());
+    return result;
 }

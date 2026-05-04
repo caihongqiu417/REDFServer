@@ -253,3 +253,11 @@ void ChatNetworkClient::SendProfileSetReq(const std::string& nickname, int avata
     req.avatar_idx = (uint8_t)avatar_idx;
     SendRaw(reinterpret_cast<const uint8_t*>(&req), sizeof(req), MSG_PROFILE_SET_REQ);
 }
+
+void ChatNetworkClient::SendPMReq(const std::string& target_username, const std::string& text)
+{
+    MsgPMReq req{};
+    strncpy(req.target_username, target_username.c_str(), sizeof(req.target_username) - 1);
+    strncpy(req.text,            text.c_str(),            sizeof(req.text)            - 1);
+    SendRaw(reinterpret_cast<const uint8_t*>(&req), sizeof(req), MSG_PM_REQ);
+}

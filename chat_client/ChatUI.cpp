@@ -47,7 +47,27 @@ void ChatUI::RenderChatMsg(const ChatLine& msg)
     }
     dl->AddCircle(av_ctr, av_r, IM_COL32(150, 150, 150, 100), 32, 1.0f);
 
+    /* 头像上盖一个不可见按钮，捕捉点击事件。
+     * OTHER 消息才能点，自己的头像点了没意义，系统消息根本走不到这里。*/
+    if (msg.kind == ChatLine::Kind::OTHER && !msg.sender_username.empty()) {
+        ImGui::SetCursorScreenPos(av_min);
+        std::string btn_id = "##av_click_" + msg.sender_username + msg.nick;
+        if (ImGui::InvisibleButton(btn_id.c_str(), ImVec2(av_dia, av_dia))) {
+            pm_target_uname_ = msg.sender_username;
+            pm_target_nick_  = msg.nick;
+            pm_nicks_[msg.sender_username] = msg.nick;
+            if (pm_logs_.find(msg.sender_username) == pm_logs_.end())
+                pm_logs_[msg.sender_username] = {};
+            pm_unread_[msg.sender_username] = 0;
+            main_tab_ = MainTab::PRIVATE;
+        }
+        /* 悬停时加亮边框，给用户一点点击提示 */
+        if (ImGui::IsItemHovered())
+            dl->AddCircle(av_ctr, av_r, IM_COL32(255, 255, 255, 160), 32, 2.0f);
+    }
+
     /* 跳过头像区域，文字从头像右侧开始 */
+    ImGui::SetCursorScreenPos(ImVec2(av_min.x, av_min.y));
     ImGui::Dummy(ImVec2(av_dia + gap, av_dia));
     ImGui::SameLine(0, 0);
 
@@ -117,11 +137,13 @@ void ChatUI::Render(ChatNetworkClient& net)
             RenderPlayerList();
             ImGui::SameLine();
             RenderChatArea(net);
+        } else if (main_tab_ == MainTab::PRIVATE) {
+            RenderPMTab(net);
         } else {
-            /* 好友 / 私聊功能占位 */
+            /* 好友功能占位 */
             float h = ImGui::GetContentRegionAvail().y;
             ImGui::SetCursorPosY(h * 0.45f);
-            const char* tip = (main_tab_ == MainTab::FRIENDS) ? "好友功能即将上线..." : "私聊功能即将上线...";
+            const char* tip = "好友功能即将上线...";
             float tw = ImGui::CalcTextSize(tip).x;
             ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - tw) * 0.5f);
             ImGui::TextColored(kGray, "%s", tip);
@@ -192,9 +214,13 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
          * 有人加入世界（服务器广播）
          * ======================================================== */
         case MSG_JOIN: {
-            std::string nick = m.body.empty() ? "unknown" : m.body;
-            players_.push_back(nick);                          // 添加到本地玩家列表
-            AppendMsg("[系统] " + nick + " 加入世界");
+            std::string body = m.body.empty() ? "unknown" : m.body;
+            size_t tab = body.find('\t');
+            PlayerInfo p;
+            p.username = (tab != std::string::npos) ? body.substr(0, tab) : body;
+            p.nick     = (tab != std::string::npos) ? body.substr(tab + 1) : body;
+            players_.push_back(p);
+            AppendMsg("[系统] " + p.nick + " 加入世界");
             break;
         }
 
@@ -202,9 +228,13 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
          * 有人离开世界（服务器广播）
          * ======================================================== */
         case MSG_LEAVE: {
-            std::string nick = m.body.empty() ? "unknown" : m.body;
-            auto it = std::find(players_.begin(), players_.end(), nick);
-            if (it != players_.end()) players_.erase(it);      // 从本地玩家列表移除
+            std::string body = m.body.empty() ? "unknown" : m.body;
+            size_t tab = body.find('\t');
+            std::string uname = (tab != std::string::npos) ? body.substr(0, tab) : body;
+            std::string nick  = (tab != std::string::npos) ? body.substr(tab + 1) : body;
+            auto it = std::find_if(players_.begin(), players_.end(),
+                [&](const PlayerInfo& p){ return p.username == uname; });
+            if (it != players_.end()) players_.erase(it);
             AppendMsg("[系统] " + nick + " 离开世界");
             break;
         }
@@ -213,13 +243,17 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
          * 聊天消息（他人发送，服务器转发）
          * ======================================================== */
         case MSG_CHAT: {
-            if (m.body.empty()) break;
-            int av = (uint8_t)m.body[0];           /* 第 0 字节是 avatar_idx */
-            std::string rest = m.body.substr(1);   /* 剩余是 "昵称: 消息文本" */
+            /* body 格式：[1B avatar][32B username]["昵称: 文本"] */
+            if (m.body.size() < 33) break;
+            int av = (uint8_t)m.body[0];
+            /* username 固定 32 字节，c_str() 截到第一个 \0 */
+            std::string uname(m.body.data() + 1, 32);
+            uname = uname.c_str();
+            std::string rest = m.body.substr(33);
             size_t sep = rest.find(": ");
             std::string nick = (sep != std::string::npos) ? rest.substr(0, sep) : "?";
             std::string text = (sep != std::string::npos) ? rest.substr(sep + 2) : rest;
-            AppendChat(nick, text, av, false);
+            AppendChat(nick, text, av, false, uname);
             break;
         }
 
@@ -255,8 +289,49 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
             break;
         }
 
+        /* ========================================================
+         * 私聊消息（服务器点对点投递）
+         * ======================================================== */
+        case MSG_PM_RECV: {
+            if (m.body.size() < sizeof(MsgPMRecv)) break;
+            MsgPMRecv recv{};
+            memcpy(&recv, m.body.data(), sizeof(MsgPMRecv));
+            recv.sender_username[sizeof(recv.sender_username) - 1] = '\0';
+            recv.sender_nick    [sizeof(recv.sender_nick)     - 1] = '\0';
+            recv.text           [sizeof(recv.text)            - 1] = '\0';
+
+            /* is_echo=1：发送方的历史副本，sender_username 存的是对方账号名，
+             * 要归入对方的会话窗口，并按 SELF 渲染。
+             * is_echo=0：正常收到的消息，sender_username 是发送者，按 OTHER 渲染。*/
+            std::string uname(recv.sender_username);  // echo:对方账号 / 正常:发送者账号
+            std::string nick (recv.sender_nick);
+            std::string text (recv.text);
+
+            if (pm_logs_.find(uname) == pm_logs_.end())
+                pm_logs_[uname] = {};
+
+            ChatLine cl;
+            if (recv.is_echo) {
+                /* 自己发出去的消息，用本地昵称和头像显示 */
+                cl.kind       = ChatLine::Kind::SELF;
+                cl.nick       = std::string(nick_buf_);
+                cl.avatar_idx = current_avatar_;
+            } else {
+                cl.kind       = ChatLine::Kind::OTHER;
+                cl.nick       = nick;
+                cl.avatar_idx = recv.avatar_idx;
+                pm_nicks_[uname] = nick;
+                /* 收到新消息才计未读，自己的 echo 不算 */
+                if (main_tab_ != MainTab::PRIVATE || pm_target_uname_ != uname)
+                    pm_unread_[uname]++;
+            }
+            cl.text = text;
+            pm_logs_[uname].push_back(cl);
+            break;
+        }
+
         default:
-            break;                                             // 未知消息类型，忽略
+            break;
         }
     }
 }
@@ -281,7 +356,8 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
         ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
         if (ImGui::Button("加入世界") && can_join) {
             net.SendJoin(nick_buf_);
-            players_.push_back(std::string(nick_buf_) + " (你)");
+            PlayerInfo self; self.username = user_buf_; self.nick = nick_buf_;
+            players_.push_back(self);
             AppendMsg(std::string("[系统] 你以昵称 \"") + nick_buf_ + "\" 加入世界");
             joined_ = true;
             focus_input_ = true;
@@ -307,8 +383,8 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
         ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
         if (ImGui::Button("离开世界")) {
             net.SendLeave(nick_buf_);
-            std::string self = std::string(nick_buf_) + " (你)";
-            auto it = std::find(players_.begin(), players_.end(), self);
+            auto it = std::find_if(players_.begin(), players_.end(),
+                [this](const PlayerInfo& p){ return p.username == std::string(user_buf_); });
             if (it != players_.end()) players_.erase(it);
             joined_ = false;
             AppendMsg("[系统] 你已离开世界");
@@ -333,13 +409,39 @@ void ChatUI::RenderPlayerList()
     /* 红色分隔线 */
     ImGui::Separator();
 
-    /* 玩家列表：红色子弹点 + 默认文字 */
+    /* 玩家列表：红色子弹点；非自己可右键发起私聊 */
     for (auto& p : players_) {
+        bool is_self = (p.username == std::string(user_buf_));
+
         ImGui::PushStyleColor(ImGuiCol_Text, kRed);
         ImGui::Bullet();
         ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextUnformatted(p.c_str());
+        ImGui::TextUnformatted(p.nick.c_str());
+        if (is_self) { ImGui::SameLine(); ImGui::TextColored(kGray, "(你)"); }
+
+        if (!is_self) {
+            /* 右键弹窗：每个玩家用 username 做唯一 popup id */
+            std::string popup_id = "##ctx_" + p.username;
+            if (ImGui::IsItemHovered() &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+                ImGui::OpenPopup(popup_id.c_str());
+
+            if (ImGui::BeginPopup(popup_id.c_str())) {
+                ImGui::TextColored(kGray, "%s", p.nick.c_str());
+                ImGui::Separator();
+                if (ImGui::MenuItem("私聊")) {
+                    pm_target_uname_ = p.username;
+                    pm_target_nick_  = p.nick;
+                    pm_nicks_[p.username] = p.nick;
+                    if (pm_logs_.find(p.username) == pm_logs_.end())
+                        pm_logs_[p.username] = {};
+                    pm_unread_[p.username] = 0;
+                    main_tab_ = MainTab::PRIVATE;
+                }
+                ImGui::EndPopup();
+            }
+        }
     }
 
     ImGui::EndChild();
@@ -470,6 +572,16 @@ void ChatUI::RenderNavSidebar()
         ImVec2 icon_max = { center.x + half, center.y + half };
         dl->AddImage((void*)(uintptr_t)(*t.tex), icon_min, icon_max);
 
+        /* 私聊图标：有未读消息时在右上角画红点 */
+        if (t.tab == MainTab::PRIVATE && main_tab_ != MainTab::PRIVATE) {
+            int total_unread = 0;
+            for (auto& kv : pm_unread_) total_unread += kv.second;
+            if (total_unread > 0) {
+                ImVec2 dot = { center.x + radius * 0.6f, center.y - radius * 0.6f };
+                dl->AddCircleFilled(dot, 5.0f, IM_COL32(220, 30, 30, 255), 16);
+            }
+        }
+
         cursor_y += radius * 2.0f + 12.0f;   /* 下一个图标的起始 y */
     }
 
@@ -545,13 +657,15 @@ void ChatUI::AppendMsg(const std::string& line)
         messages_.erase(messages_.begin());
 }
 
-void ChatUI::AppendChat(const std::string& nick, const std::string& text, int av, bool is_self)
+void ChatUI::AppendChat(const std::string& nick, const std::string& text,
+                        int av, bool is_self, const std::string& sender_username)
 {
     ChatLine cl;
-    cl.kind       = is_self ? ChatLine::Kind::SELF : ChatLine::Kind::OTHER;
-    cl.nick       = nick;
-    cl.text       = text;
-    cl.avatar_idx = av;
+    cl.kind            = is_self ? ChatLine::Kind::SELF : ChatLine::Kind::OTHER;
+    cl.nick            = nick;
+    cl.text            = text;
+    cl.avatar_idx      = av;
+    cl.sender_username = sender_username;
     messages_.push_back(cl);
     scroll_bottom_ = true;
     if (messages_.size() > 500)
@@ -657,9 +771,9 @@ void ChatUI::TrySendChat(ChatNetworkClient& net)
     focus_input_  = true;
 }
 
-std::vector<std::string> ChatUI::ParsePlayerList(const std::string& body)
+std::vector<PlayerInfo> ChatUI::ParsePlayerList(const std::string& body)
 {
-    std::vector<std::string> result;
+    std::vector<PlayerInfo> result;
     if (body.size() < 2) return result;
 
     uint16_t num;
@@ -674,8 +788,13 @@ std::vector<std::string> ChatUI::ParsePlayerList(const std::string& body)
         slen = ntohs(slen);
         offset += 2;
         if (offset + slen > body.size()) break;
-        result.push_back(body.substr(offset, slen));
+        std::string entry = body.substr(offset, slen);
         offset += slen;
+        size_t tab = entry.find('\t');
+        PlayerInfo p;
+        p.username = (tab != std::string::npos) ? entry.substr(0, tab) : entry;
+        p.nick     = (tab != std::string::npos) ? entry.substr(tab + 1) : entry;
+        result.push_back(p);
     }
     return result;
 }
@@ -862,4 +981,92 @@ void ChatUI::RenderProfileModal(ChatNetworkClient& net)
     ImGui::EndChild();
 
     ImGui::EndPopup();
+}
+
+/* ------------------------------------------------------------------ */
+/*  私聊 Tab                                                            */
+/* ------------------------------------------------------------------ */
+void ChatUI::RenderPMTab(ChatNetworkClient& net)
+{
+    float avail_h = ImGui::GetContentRegionAvail().y;
+    float input_h = ImGui::GetFrameHeightWithSpacing() + 6;
+
+    /* ---- 左栏：联系人列表 ---- */
+    ImGui::BeginChild("##pm_contacts", ImVec2(158, avail_h), true);
+    ImGui::TextColored(kRed, "私聊");
+    ImGui::Separator();
+
+    for (auto& kv : pm_logs_) {
+        const std::string& uname = kv.first;
+        std::string display = pm_nicks_.count(uname) ? pm_nicks_.at(uname) : uname;
+        int unread = pm_unread_.count(uname) ? pm_unread_.at(uname) : 0;
+
+        bool selected = (pm_target_uname_ == uname);
+        std::string label = display;
+        if (unread > 0) label += " [" + std::to_string(unread) + "]";
+        label += "##" + uname;   /* 保证 Selectable id 唯一 */
+
+        if (ImGui::Selectable(label.c_str(), selected)) {
+            pm_target_uname_        = uname;
+            pm_target_nick_         = display;
+            pm_unread_[uname]       = 0;
+            focus_input_            = true;
+        }
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    /* ---- 右栏：聊天记录 + 输入框 ---- */
+    ImGui::BeginChild("##pm_right", ImVec2(-1, avail_h), false);
+
+    if (pm_target_uname_.empty()) {
+        float h = ImGui::GetContentRegionAvail().y;
+        ImGui::SetCursorPosY(h * 0.45f);
+        const char* tip = "右键玩家列表开始私聊";
+        ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(tip).x) * 0.5f);
+        ImGui::TextColored(kGray, "%s", tip);
+    } else {
+        float chat_w = ImGui::GetContentRegionAvail().x;
+        float chat_h = ImGui::GetContentRegionAvail().y - input_h;
+
+        /* 聊天记录 */
+        ImGui::BeginChild("##pm_scroll", ImVec2(chat_w, chat_h), true);
+        for (auto& msg : pm_logs_[pm_target_uname_]) {
+            RenderChatMsg(msg);
+        }
+        ImGui::SetScrollHereY(1.0f);
+        ImGui::EndChild();
+
+        /* 输入框 + Send */
+        if (focus_input_) { ImGui::SetKeyboardFocusHere(); focus_input_ = false; }
+        ImGui::SetNextItemWidth(chat_w - 74);
+        bool enter = ImGui::InputText("##pminput", pm_buf_, sizeof(pm_buf_),
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        bool can_send = net.IsConnected() && pm_buf_[0] != '\0';
+        ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
+        if ((ImGui::Button("Send##pm") || enter) && can_send)
+            TrySendPM(net);
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::EndChild();
+}
+
+void ChatUI::TrySendPM(ChatNetworkClient& net)
+{
+    std::string text(pm_buf_);
+    if (text.empty() || pm_target_uname_.empty()) return;
+    net.SendPMReq(pm_target_uname_, text);
+
+    ChatLine cl;
+    cl.kind       = ChatLine::Kind::SELF;
+    cl.nick       = std::string(nick_buf_);
+    cl.text       = text;
+    cl.avatar_idx = current_avatar_;
+    pm_logs_[pm_target_uname_].push_back(cl);
+
+    pm_buf_[0]   = '\0';
+    focus_input_ = true;
 }

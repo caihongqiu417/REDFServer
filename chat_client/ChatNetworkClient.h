@@ -35,6 +35,9 @@ public:
     /* 把主页改动（昵称 + 头像序号）发给服务器保存 */
     void SendProfileSetReq(const std::string& nickname, int avatar_idx);
 
+    /* 发送私聊消息 */
+    void SendPMReq(const std::string& target_username, const std::string& text);
+
 
     /* 从主线程调用：取走所有待处理的消息 */
     std::vector<ChatMsg> Poll();

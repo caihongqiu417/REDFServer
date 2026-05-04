@@ -87,20 +87,26 @@ static void appln_client_msg_recvd(const TcpServerController* tcp_server,
     }
     printf("====================\n");
 
-    /* MSG_JOIN：保存昵称，供后来连入的客户端通过 MSG_PLAYER_LIST 看到 */
     if (msg_type == MSG_JOIN && msg_size > 0) {
+        /* 保存昵称；广播 "username\tnickname" 让客户端能用账号名路由私聊 */
         tcp_client->nickname = std::string((char*)msg, msg_size);
         printf("已记录昵称: fd=%d -> \"%s\"\n", tcp_client->comm_fd, tcp_client->nickname.c_str());
-    }
+        std::string join_body = tcp_client->username + "\t" + tcp_client->nickname;
+        tcp_server->Broadcast((const uint8_t*)join_body.data(), (uint32_t)join_body.size(), MSG_JOIN, tcp_client);
 
-    /* MSG_CHAT：body 格式 = [1字节 avatar_idx][昵称: 消息文本] */
-    if (msg_type == MSG_CHAT && msg_size > 0 && !tcp_client->nickname.empty()) {
+    } else if (msg_type == MSG_CHAT && msg_size > 0 && !tcp_client->nickname.empty()) {
+        /* MSG_CHAT body 格式：[1B avatar_idx][32B username, \0 填充]["昵称: 文本"]
+         * username 固定 32 字节是为了客户端能直接按偏移量切，不用找分隔符 */
         std::string full_msg = tcp_client->nickname + ": " + std::string((char*)msg, msg_size);
+        char uname_buf[32] = {};
+        strncpy(uname_buf, tcp_client->username.c_str(), sizeof(uname_buf) - 1);
         std::string body;
         body += (char)(uint8_t)tcp_client->avatar_idx;
+        body.append(uname_buf, sizeof(uname_buf));
         body += full_msg;
         tcp_server->Broadcast((const uint8_t*)body.data(), (uint32_t)body.size(), MSG_CHAT, tcp_client);
-    } else {
+
+    } else if (msg_type != MSG_JOIN) {
         tcp_server->Broadcast(msg, msg_size, msg_type, tcp_client);
     }
     printf("已广播 %d 字节(type=%s)给其他客户端\n", msg_size, type_str);

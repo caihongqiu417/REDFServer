@@ -154,6 +154,16 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
                          MSG_PROFILE_RSP);
                 printf("[主页] 已推送 profile 给 %s: 昵称=\"%s\" 头像=%d\n",
                        client->username.c_str(), saved_nick.c_str(), saved_avatar);
+
+                /* 登录后把欠的私聊消息一次性还给他。
+                 * PopOfflineMsgs 内部会把这些消息从库里删掉，不会重复投递。
+                 * 放在 profile 之后发，保证客户端已完成初始化再收私聊包。*/
+                auto pending = svc_mgr->user_db_.PopOfflineMsgs(client->username);
+                for (auto& pm : pending) {
+                    msg_send(client->comm_fd,
+                             (const uint8_t*)&pm, sizeof(pm),
+                             MSG_PM_RECV);
+                }
             }
 
         } else if (msg_type == MSG_PROFILE_SET_REQ) {
@@ -192,6 +202,48 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
             msg_send(client->comm_fd,
                      (const uint8_t*)&rsp, sizeof(rsp),
                      MSG_PROFILE_SET_RSP);
+
+        } else if (msg_type == MSG_PM_REQ) {
+            /* ---------- 私聊请求：找到目标客户端并转发 ---------- */
+            if (client->auth_state != TcpClient::AuthState::AUTHED ||
+                body_len < sizeof(MsgPMReq)) {
+                /* 未登录或包太短，直接丢弃 */
+            } else {
+                MsgPMReq req{};
+                memcpy(&req, buf + MSG_HDR_SIZE, sizeof(MsgPMReq));
+                req.target_username[sizeof(req.target_username) - 1] = '\0';
+                req.text[sizeof(req.text) - 1] = '\0';
+
+                MsgPMRecv recv{};
+                recv.avatar_idx = (uint8_t)client->avatar_idx;
+                strncpy(recv.sender_username, client->username.c_str(), sizeof(recv.sender_username) - 1);
+                strncpy(recv.sender_nick,     client->nickname.c_str(), sizeof(recv.sender_nick)     - 1);
+                strncpy(recv.text,            req.text,                  sizeof(recv.text)            - 1);
+
+                bool ok = svc_mgr->SendToUsername(
+                    std::string(req.target_username),
+                    (const uint8_t*)&recv, sizeof(recv), MSG_PM_RECV);
+
+                if (!ok) {
+                    /* 对方不在线，存到数据库，等他下次登录再推给他 */
+                    svc_mgr->user_db_.StoreOfflineMsg(
+                        std::string(req.target_username), recv, false);
+                }
+
+                /* 给发送方也存一份历史副本，下次登录能看到自己发过的消息。
+                 * echo 里的 sender_username 存的是对方的账号名，
+                 * 客户端收到后用它找到正确的会话窗口，按 SELF 渲染。 */
+                MsgPMRecv echo = recv;
+                echo.is_echo = 1;
+                strncpy(echo.sender_username, req.target_username,
+                        sizeof(echo.sender_username) - 1);
+                svc_mgr->user_db_.StoreOfflineMsg(
+                    client->username, echo, true);
+
+                printf("[私聊] %s → %s: \"%s\" (%s)\n",
+                       client->username.c_str(), req.target_username,
+                       req.text, ok ? "已投递" : "已存离线");
+            }
 
         } else if (svc_mgr->tcp_ctrl->client_msg_recvd) {
             /* ---------- 其他业务消息（聊天/加入/离开等） ---------- */
@@ -301,10 +353,10 @@ void TcpClientServiceManager::StartTcpClientServiceManagerThreadInternal()
             while (it != this->tcp_client_db.end()) {
                 tcp_client = *it;
                 if (now - tcp_client->last_heartbeat_time >= 30) {
-                    // 构造离开消息体：优先用昵称，否则用 "ip:port"
+                    // 构造离开消息体："username\tnickname"，否则 "ip:port"
                     std::string leave_body;
                     if (!tcp_client->nickname.empty()) {
-                        leave_body = tcp_client->nickname;
+                        leave_body = tcp_client->username + "\t" + tcp_client->nickname;
                     } else {
                         struct in_addr addr;
                         addr.s_addr = tcp_client->ip_addr;
@@ -357,7 +409,7 @@ void TcpClientServiceManager::StartTcpClientServiceManagerThreadInternal()
 
                     std::string leave_body;
                     if (!tcp_client->nickname.empty()) {
-                        leave_body = tcp_client->nickname;
+                        leave_body = tcp_client->username + "\t" + tcp_client->nickname;
                     } else {
                         struct in_addr addr;
                         addr.s_addr = tcp_client->ip_addr;
@@ -520,8 +572,8 @@ void TcpClientServiceManager::SendPlayerListTo(const TcpClient* new_client)
 
     char entry[256];
     for (auto* c : tcp_client_db) {
-        if (c->nickname.empty()) continue;  /* 未 Join 的客户端不发，避免 ip:port 污染列表 */
-        snprintf(entry, sizeof(entry), "%s", c->nickname.c_str());
+        if (c->nickname.empty()) continue;
+        snprintf(entry, sizeof(entry), "%s\t%s", c->username.c_str(), c->nickname.c_str());
 
         uint16_t slen = (uint16_t)strlen(entry);
         uint16_t net_slen = htons(slen);
@@ -542,6 +594,19 @@ void TcpClientServiceManager::SendPlayerListTo(const TcpClient* new_client)
     int rc = msg_send(new_client->comm_fd, payload.data(), (uint32_t)payload.size(), MSG_PLAYER_LIST);
     if (rc < 0)
         printf("[SendPlayerListTo] 发送失败, fd=%d\n", new_client->comm_fd);
+}
+
+bool TcpClientServiceManager::SendToUsername(const std::string& username,
+                                              const uint8_t* body, uint32_t len,
+                                              uint16_t msg_type)
+{
+    for (auto* c : tcp_client_db) {
+        if (c->username == username) {
+            SendToClient(c, body, len, msg_type);
+            return true;
+        }
+    }
+    return false;
 }
 
 void TcpClientServiceManager::StopTcpClientServiceManagerThread()

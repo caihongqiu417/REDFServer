@@ -2,7 +2,9 @@
 #define USER_DATABASE_H
 
 #include <string>
+#include <vector>
 #include <sqlite3.h>
+#include "msg_protocol.h"
 
 class UserDatabase
 {
@@ -26,6 +28,15 @@ class UserDatabase
     // 保存/更新用户的昵称和头像序号，成功返回 true
     bool SetProfile(const std::string& username,
                     const std::string& nickname, int avatar_idx);
+
+    // 把一条私聊消息存到 offline_msgs，等目标用户下次登录再投递
+    // is_echo=true 表示这是给发送方存的历史副本，登录后按 SELF 渲染
+    void StoreOfflineMsg(const std::string& target_username,
+                         const MsgPMRecv& msg, bool is_echo = false);
+
+    // 取出并删除某用户的所有离线消息，按到达顺序排列
+    // 登录成功后调用一次，把欠的消息都还给他
+    std::vector<MsgPMRecv> PopOfflineMsgs(const std::string& username);
 
     void Close();
 
