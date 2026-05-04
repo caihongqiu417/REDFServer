@@ -2,7 +2,7 @@ CC=g++
 # 修正的编译选项
 CFLAGS=-g -std=c++11 -Wall -Wextra -pthread
 TARGET:testapp.exe tcp_client.exe tcp_client_string_sender.exe  # 添加新目标
-LIBS=-lpthread
+LIBS=-lpthread -lsqlite3 
 
 OBJS=TcpClientDBManager.o \
      TcpClientServiceManager.o \
