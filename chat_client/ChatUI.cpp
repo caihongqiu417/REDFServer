@@ -16,18 +16,48 @@ static const ImVec4 kWhite   = {1.00f, 1.00f, 1.00f, 1.00f};  /* 白色    按�
 static const ImVec4 kGray    = {0.46f, 0.46f, 0.46f, 1.00f};  /* 次要灰  */
 
 /* ------------------------------------------------------------------ */
-/*  根据消息前缀选色并渲染一行聊天文本                                  */
+/*  渲染单条聊天消息：系统消息直接着色；聊天消息左侧显示头像和昵称        */
 /* ------------------------------------------------------------------ */
-static void RenderChatLine(const std::string& line)
+void ChatUI::RenderChatMsg(const ChatLine& msg)
 {
-    /* UTF-8 前缀匹配：[系统] / [你] / 其他 */
-    if (line.compare(0, 7, "[系统]") == 0) {          /* "[系统]" = 7 bytes UTF-8 */
-        ImGui::TextColored(kRedDim, "%s", line.c_str());
-    } else if (line.compare(0, 5, "[你]") == 0) {     /* "[你]"  = 5 bytes UTF-8  */
-        ImGui::TextColored(kRedDark, "%s", line.c_str());
-    } else {
-        ImGui::TextUnformatted(line.c_str());
+    if (msg.kind == ChatLine::Kind::SYSTEM) {
+        ImGui::TextColored(kRedDim, "%s", msg.text.c_str());
+        return;
     }
+
+    const float av_dia = 28.0f;
+    const float av_r   = av_dia * 0.5f;
+    const float gap    = 6.0f;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 av_min  = ImGui::GetCursorScreenPos();
+    ImVec2 av_ctr  = { av_min.x + av_r, av_min.y + av_r };
+
+    int aidx = (msg.avatar_idx >= 0 && msg.avatar_idx < avatar_count_)
+               ? msg.avatar_idx : 0;
+    if (avatar_count_ > 0) {
+        dl->AddImageRounded(
+            (void*)(uintptr_t)avatar_textures_[aidx],
+            av_min,
+            ImVec2(av_min.x + av_dia, av_min.y + av_dia),
+            ImVec2(0, 0), ImVec2(1, 1),
+            IM_COL32(255, 255, 255, 255), av_r);
+    } else {
+        dl->AddCircleFilled(av_ctr, av_r, IM_COL32(100, 100, 100, 200), 32);
+    }
+    dl->AddCircle(av_ctr, av_r, IM_COL32(150, 150, 150, 100), 32, 1.0f);
+
+    /* 跳过头像区域，文字从头像右侧开始 */
+    ImGui::Dummy(ImVec2(av_dia + gap, av_dia));
+    ImGui::SameLine(0, 0);
+
+    ImVec4 nick_col = (msg.kind == ChatLine::Kind::SELF)
+                      ? kRed
+                      : ImVec4(0.30f, 0.60f, 1.00f, 1.00f);
+    ImGui::TextColored(nick_col, "%s:", msg.nick.c_str());
+    ImGui::SameLine(0, 4);
+    ImGui::TextUnformatted(msg.text.c_str());
+    ImGui::Spacing();
 }
 
 /* ================================================================== */
@@ -159,32 +189,39 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
         }
 
         /* ========================================================
-         * 有人加入聊天室（服务器广播）
+         * 有人加入世界（服务器广播）
          * ======================================================== */
         case MSG_JOIN: {
             std::string nick = m.body.empty() ? "unknown" : m.body;
             players_.push_back(nick);                          // 添加到本地玩家列表
-            AppendMsg("[系统] " + nick + " 加入聊天室");
+            AppendMsg("[系统] " + nick + " 加入世界");
             break;
         }
 
         /* ========================================================
-         * 有人离开聊天室（服务器广播）
+         * 有人离开世界（服务器广播）
          * ======================================================== */
         case MSG_LEAVE: {
             std::string nick = m.body.empty() ? "unknown" : m.body;
             auto it = std::find(players_.begin(), players_.end(), nick);
             if (it != players_.end()) players_.erase(it);      // 从本地玩家列表移除
-            AppendMsg("[系统] " + nick + " 离开聊天室");
+            AppendMsg("[系统] " + nick + " 离开世界");
             break;
         }
 
         /* ========================================================
          * 聊天消息（他人发送，服务器转发）
          * ======================================================== */
-        case MSG_CHAT:
-            AppendMsg(m.body);                                 // body 已含 "昵称: 消息文本"
+        case MSG_CHAT: {
+            if (m.body.empty()) break;
+            int av = (uint8_t)m.body[0];           /* 第 0 字节是 avatar_idx */
+            std::string rest = m.body.substr(1);   /* 剩余是 "昵称: 消息文本" */
+            size_t sep = rest.find(": ");
+            std::string nick = (sep != std::string::npos) ? rest.substr(0, sep) : "?";
+            std::string text = (sep != std::string::npos) ? rest.substr(sep + 2) : rest;
+            AppendChat(nick, text, av, false);
             break;
+        }
 
         /* 服务器登录后推送的主页数据（昵称 + 头像序号） */
         case MSG_PROFILE_RSP: {
@@ -242,10 +279,10 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
 
         bool can_join = net.IsConnected() && nick_buf_[0] != '\0';
         ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
-        if (ImGui::Button("Join") && can_join) {
+        if (ImGui::Button("加入世界") && can_join) {
             net.SendJoin(nick_buf_);
             players_.push_back(std::string(nick_buf_) + " (你)");
-            AppendMsg(std::string("[系统] 你以昵称 \"") + nick_buf_ + "\" 加入聊天室");
+            AppendMsg(std::string("[系统] 你以昵称 \"") + nick_buf_ + "\" 加入世界");
             joined_ = true;
             focus_input_ = true;
         }
@@ -264,17 +301,17 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
         ImGui::TextColored(kGray, "在线聊天中   昵称:");
         ImGui::SameLine();
         ImGui::TextColored(kRed, "%s", nick_buf_);
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70);
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
 
-        /* Leave 按钮：红底白字 */
+        /* 离开世界 按钮：红底白字 */
         ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
-        if (ImGui::Button("Leave")) {
+        if (ImGui::Button("离开世界")) {
             net.SendLeave(nick_buf_);
             std::string self = std::string(nick_buf_) + " (你)";
             auto it = std::find(players_.begin(), players_.end(), self);
             if (it != players_.end()) players_.erase(it);
             joined_ = false;
-            AppendMsg("[系统] 你已离开聊天室");
+            AppendMsg("[系统] 你已离开世界");
         }
         ImGui::PopStyleColor();
     }
@@ -321,8 +358,8 @@ void ChatUI::RenderChatArea(ChatNetworkClient& net)
     ImGui::BeginChild("##chat_scroll",
                       ImVec2(avail_w, avail_h - input_h),
                       true);
-    for (auto& line : messages_) {
-        RenderChatLine(line);
+    for (auto& msg : messages_) {
+        RenderChatMsg(msg);
     }
     if (scroll_bottom_) {
         ImGui::SetScrollHereY(1.0f);
@@ -366,6 +403,13 @@ void ChatUI::SetAvatars(unsigned int* textures, int count)
     avatar_count_ = (count > MAX_AVATARS) ? MAX_AVATARS : count;
     for (int i = 0; i < avatar_count_; i++)
         avatar_textures_[i] = textures[i];
+}
+
+void ChatUI::SetBackground(unsigned int tex, int w, int h)
+{
+    bg_tex_ = tex;
+    bg_w_   = w;
+    bg_h_   = h;
 }
 
 /* ------------------------------------------------------------------ */
@@ -492,10 +536,23 @@ void ChatUI::RenderNavSidebar()
 /* ------------------------------------------------------------------ */
 /*  工具函数                                                            */
 /* ------------------------------------------------------------------ */
-//往聊天记录里加一行，超过 500 条就删最旧的
 void ChatUI::AppendMsg(const std::string& line)
 {
-    messages_.push_back(line);
+    ChatLine sys; sys.kind = ChatLine::Kind::SYSTEM; sys.text = line; sys.avatar_idx = -1;
+    messages_.push_back(sys);
+    scroll_bottom_ = true;
+    if (messages_.size() > 500)
+        messages_.erase(messages_.begin());
+}
+
+void ChatUI::AppendChat(const std::string& nick, const std::string& text, int av, bool is_self)
+{
+    ChatLine cl;
+    cl.kind       = is_self ? ChatLine::Kind::SELF : ChatLine::Kind::OTHER;
+    cl.nick       = nick;
+    cl.text       = text;
+    cl.avatar_idx = av;
+    messages_.push_back(cl);
     scroll_bottom_ = true;
     if (messages_.size() > 500)
         messages_.erase(messages_.begin());
@@ -508,30 +565,39 @@ void ChatUI::RenderLoginPage(ChatNetworkClient& net)
 {
     ImGuiIO& io = ImGui::GetIO();
 
-    // 登陆面板居中
-    float panel_w = 320.0f;
-    float panel_h = 210.0f;
+    /* 背景图：铺满整个窗口 */
+    if (bg_tex_) {
+        ImGui::GetWindowDrawList()->AddImage(
+            (void*)(uintptr_t)bg_tex_,
+            ImVec2(0, 0),
+            ImVec2(io.DisplaySize.x, io.DisplaySize.y));
+    }
+
+    /* 登录面板：更大、半透明 */
+    float panel_w = 420.0f;
+    float panel_h = 280.0f;
     ImGui::SetCursorPos(ImVec2(
         (io.DisplaySize.x - panel_w) * 0.5f,
         (io.DisplaySize.y - panel_h) * 0.5f));
 
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.05f, 0.05f, 0.05f, 0.55f));
     ImGui::BeginChild("##login_panel", ImVec2(panel_w, panel_h), true);
 
     // 标题
-    ImGui::SetCursorPosX((panel_w - ImGui::CalcTextSize("REDF Chat").x) * 0.5f);
-    ImGui::TextColored(kRed, "REDF Chat");
+    ImGui::SetCursorPosX((panel_w - 20 - ImGui::CalcTextSize("Redflag Chat").x) * 0.5f);
+    ImGui::TextColored(kWhite, "Redflag Chat");
     ImGui::Separator();
     ImGui::Spacing();
 
     // 用户名
-    ImGui::TextColored(kGray, "用户名");
-    ImGui::SetNextItemWidth(panel_w - 20);
+    ImGui::TextColored(kWhite, "账号");
+    ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##user", user_buf_, sizeof(user_buf_));
     ImGui::Spacing();
 
     // 密码
-    ImGui::TextColored(kGray, "密码");
-    ImGui::SetNextItemWidth(panel_w - 20);
+    ImGui::TextColored(kWhite, "密码");
+    ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##pass", pass_buf_, sizeof(pass_buf_),
                      ImGuiInputTextFlags_Password);
     ImGui::Spacing();
@@ -551,13 +617,13 @@ void ChatUI::RenderLoginPage(ChatNetworkClient& net)
 
     // 登陆按钮（红底白字）
     ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
-    if (ImGui::Button("登陆", ImVec2(140, 0)) && can_act) {
+    if (ImGui::Button("登陆", ImVec2(190, 0)) && can_act) {
         ui_state_ = UiState::WAITING;
         login_error_ = "";
         net.SendLoginReq(user_buf_, pass_buf_);
     }
     ImGui::SameLine();
-    if (ImGui::Button("注册", ImVec2(140, 0)) && can_act) {
+    if (ImGui::Button("注册", ImVec2(190, 0)) && can_act) {
         ui_state_ = UiState::WAITING;
         login_error_ = "";
         net.SendRegisterReq(user_buf_, pass_buf_);
@@ -578,6 +644,7 @@ void ChatUI::RenderLoginPage(ChatNetworkClient& net)
     }
 
     ImGui::EndChild();
+    ImGui::PopStyleColor();   /* ImGuiCol_ChildBg */
 }
 
 void ChatUI::TrySendChat(ChatNetworkClient& net)
@@ -585,7 +652,7 @@ void ChatUI::TrySendChat(ChatNetworkClient& net)
     std::string text(chat_buf_);
     if (text.empty()) return;
     net.SendChat(text);
-    AppendMsg(std::string("[你] ") + text);
+    AppendChat(std::string(nick_buf_), text, current_avatar_, true);
     chat_buf_[0] = '\0';
     focus_input_  = true;
 }

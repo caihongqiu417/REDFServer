@@ -21,6 +21,7 @@ class TcpClient{
         /* 客户端通过 MSG_JOIN 设置的昵称，服务器收到后存此处
          * mutable 允许在 const TcpClient* 回调中写入 */
         mutable std::string nickname;
+        mutable int         avatar_idx = 0;  /* 当前使用的头像序号，随主页保存同步更新 */
 
         /* 登陆成功后记录的账号名（区别于昵称 nickname） */
         mutable std::string username;

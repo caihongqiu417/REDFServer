@@ -145,6 +145,10 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
                         sizeof(prof.nickname) - 1);
                 prof.avatar_idx = (uint8_t)saved_avatar;
 
+                /* 同步到 TcpClient，供广播 MSG_CHAT 时附带头像序号 */
+                client->nickname   = saved_nick;
+                client->avatar_idx = saved_avatar;
+
                 msg_send(client->comm_fd,
                          (const uint8_t*)&prof, sizeof(prof),
                          MSG_PROFILE_RSP);
@@ -177,7 +181,9 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
                     strncpy(rsp.reason, "数据库写入失败", sizeof(rsp.reason) - 1);
 
                 if (ok && !new_nick.empty())
-                    client->nickname = new_nick;   /* 同步内存中的昵称 */
+                    client->nickname   = new_nick;
+                if (ok)
+                    client->avatar_idx = new_avatar;
 
                 printf("[主页] %s 更新 nickname=\"%s\" avatar=%d %s\n",
                        client->username.c_str(), new_nick.c_str(),

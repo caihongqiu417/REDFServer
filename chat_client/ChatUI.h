@@ -4,6 +4,13 @@
 #include <cstdint>
 #include "ChatNetworkClient.h"
 
+struct ChatLine {
+    enum class Kind { SYSTEM, SELF, OTHER } kind = Kind::SYSTEM;
+    std::string nick;
+    std::string text;
+    int avatar_idx = -1;
+};
+
 class ChatUI {
 public:
     ChatUI();
@@ -20,6 +27,9 @@ public:
     /* 传入头像纹理数组（由 main.cpp 从 Avatar 目录 PNG 头文件加载） */
     void SetAvatars(unsigned int* textures, int count);
 
+    /* 传入登录页背景图纹理 */
+    void SetBackground(unsigned int tex, int w, int h);
+
 private:
     /* ================================================================
      * 界面状态
@@ -30,6 +40,11 @@ private:
     /* 左侧导航栏当前选中的功能 */
     enum class MainTab { WORLD, FRIENDS, PRIVATE };
     MainTab main_tab_ = MainTab::WORLD;
+
+    /* 登录页背景图 */
+    unsigned int bg_tex_ = 0;
+    int          bg_w_   = 0;
+    int          bg_h_   = 0;
 
     /* 图标纹理 ID（OpenGL GLuint，用 unsigned int 避免引入 GL 头文件） */
     unsigned int icon_world_   = 0;
@@ -62,7 +77,7 @@ private:
     char  nick_buf_[64]  = "Player";               // 聊天界面：昵称输入框，默认 "Player"
     char  chat_buf_[512] = {};                     // 聊天界面：消息输入框
 
-    std::vector<std::string> messages_;             // 聊天历史（已格式化的行，如 "张三: 你好"）
+    std::vector<ChatLine> messages_;                  // 聊天历史
     std::vector<std::string> players_;              // 在线玩家列表（昵称或 IP:Port）
 
     /* ================================================================
@@ -79,7 +94,9 @@ private:
     /* ================================================================
      * 工具函数
      * ================================================================ */
-    void AppendMsg(const std::string& line);        // 往聊天历史追加一行
-    static std::vector<std::string> ParsePlayerList(const std::string& body); // 解析 MSG_PLAYER_LIST 的二进制包体
-    void TrySendChat(ChatNetworkClient& net);       // 用户按回车时发送聊天消息
+    void AppendMsg(const std::string& line);         // 追加系统消息
+    void AppendChat(const std::string& nick, const std::string& text, int av, bool is_self); // 追加聊天消息
+    void RenderChatMsg(const ChatLine& msg);          // 渲染单条消息（头像 + 昵称 + 文本）
+    static std::vector<std::string> ParsePlayerList(const std::string& body);
+    void TrySendChat(ChatNetworkClient& net);
 };

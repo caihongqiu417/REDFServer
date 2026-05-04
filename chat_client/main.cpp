@@ -5,6 +5,9 @@
 #include <cstdio>
 #include <cstring>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include "ChatNetworkClient.h"
 #include "ChatUI.h"
 #include "ImGuiThemeLoader.h"
@@ -37,6 +40,22 @@ static GLuint CreateTexture(const unsigned char* data, int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    return tex;
+}
+
+/* 从文件加载图片（支持 JPEG/PNG 等），返回 OpenGL 纹理 ID，失败返回 0 */
+static GLuint LoadTextureFromFile(const char* path, int* out_w = nullptr, int* out_h = nullptr)
+{
+    int w, h, ch;
+    unsigned char* pixels = stbi_load(path, &w, &h, &ch, 4);   /* 强制转 RGBA */
+    if (!pixels) {
+        fprintf(stderr, "[main] 图片加载失败: %s\n", path);
+        return 0;
+    }
+    GLuint tex = CreateTexture(pixels, w, h);
+    stbi_image_free(pixels);
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
     return tex;
 }
 
@@ -146,11 +165,16 @@ int main(int argc, char** argv)
     for (int i = 0; i < AVATAR_COUNT; i++)
         avatar_textures[i] = CreateTexture(avatar_data[i], avatar_wh[i][0], avatar_wh[i][1]);
 
+    /* ---- 加载登录页背景图 ---- */
+    int bg_w = 0, bg_h = 0;
+    GLuint bg_tex = LoadTextureFromFile("Background/FF7.jpeg", &bg_w, &bg_h);
+
     /* ---- 网络 + UI 对象 ---- */
     ChatNetworkClient net;
     ChatUI            ui;
     ui.SetIcons(icon_world, icon_friend, icon_private);
     ui.SetAvatars(avatar_textures, AVATAR_COUNT);
+    ui.SetBackground(bg_tex, bg_w, bg_h);
 
     printf("[main] 正在连接到 %s:%u ...\n", SERVER_HOST, SERVER_PORT);
     if (!net.Connect(SERVER_HOST, SERVER_PORT))
@@ -178,6 +202,7 @@ int main(int argc, char** argv)
 
     /* ---- 清理 ---- */
     net.Disconnect();
+    if (bg_tex) glDeleteTextures(1, &bg_tex);
     glDeleteTextures(1, &icon_world);
     glDeleteTextures(1, &icon_friend);
     glDeleteTextures(1, &icon_private);
