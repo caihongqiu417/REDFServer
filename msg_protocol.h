@@ -34,7 +34,45 @@ typedef enum : uint16_t {
                             *     [str_len: uint16_t 大端][str: str_len字节，无\0]
                             *   每条 str 格式为 "ip:port"（如 "127.0.0.1:52341"） */
     MSG_HEARTBEAT   = 6,   /* 客户端→服务器：心跳包（body为空，30s内发3次） */
+
+    /* -------- 登陆/注册 -------- */
+    MSG_LOGIN_REQ   = 7,   /* 客户端→服务器：登陆请求，body = MsgLoginReq  (96B) */
+    MSG_LOGIN_RSP   = 8,   /* 服务器→客户端：登陆响应，body = MsgLoginRsp  (64B) */
+    MSG_REG_REQ     = 9,   /* 客户端→服务器：注册请求，body = MsgLoginReq  (96B，复用) */
+    MSG_REG_RSP     = 10,  /* 服务器→客户端：注册响应，body = MsgLoginRsp  (64B，复用) */
 } MsgType;
+
+
+/* ------------------------------------------------------------------ */
+/*  登陆/注册消息体结构（定长，直接 memcpy)              */
+/* ------------------------------------------------------------------ */
+
+#define MSG_LOGIN_USERNAME_LEN  32   /* 用户名最大字节数（含\0） */
+#define MSG_LOGIN_PWHASH_LEN    64   /* SHA-256 hex字符串长度（含\0） */
+#define MSG_LOGIN_REASON_LEN    63   /* 响应原因字符串最大字节数（含\0） */
+
+
+/* 客户端 → 服务器：登陆请求 / 注册请求 (96 字节) */
+#pragma pack(push, 1) //禁止填充对齐
+typedef struct {
+    char username[MSG_LOGIN_USERNAME_LEN];  /* UTF-8，右补\0 */
+    char pw_hash [MSG_LOGIN_PWHASH_LEN];    /* SHA-256 hex，如 "a3f5...4d2e\0" */
+} MsgLoginReq;
+#pragma pack(pop)
+
+/* 服务器 → 客户端：登陆响应 / 注册响应 (64 字节) */
+#pragma pack(push, 1)
+typedef struct {
+    uint8_t result;                         /* 0 = 失败，1 = 成功 */
+    char    reason[MSG_LOGIN_REASON_LEN];   /* 失败时填原因，成功时可为空 */
+} MsgLoginRsp;
+#pragma pack(pop)
+
+/* 断言：确保结构体尺寸符合预期（编译期检查） */
+static_assert(sizeof(MsgLoginReq) == 96, "MsgLoginReq size mismatch");
+static_assert(sizeof(MsgLoginRsp) == 64, "MsgLoginRsp size mismatch");
+
+
 
 /* ------------------------------------------------------------------ */
 /*  内部工具：保证将 len 字节全部写入 fd（处理 TCP 短写）               */
