@@ -8,12 +8,12 @@
 /* ------------------------------------------------------------------ */
 /*  统一色板（与 theme_red_white.xml 保持一致）                         */
 /* ------------------------------------------------------------------ */
-static const ImVec4 kRed     = {0.76f, 0.05f, 0.05f, 1.00f};  /* 品牌红  #C20C0C */
-static const ImVec4 kRedHov  = {0.88f, 0.08f, 0.08f, 1.00f};  /* 高亮红  Hover   */
-static const ImVec4 kRedDark = {0.60f, 0.04f, 0.04f, 1.00f};  /* 深压红  Active  */
-static const ImVec4 kRedDim  = {0.76f, 0.05f, 0.05f, 0.65f};  /* 半透红  系统消息 */
+static const ImVec4 kRed     = {0.86f, 0.18f, 0.18f, 1.00f};  /* 品牌红  #DC2E2E */
+static const ImVec4 kRedHov  = {0.92f, 0.22f, 0.22f, 1.00f};  /* 高亮红  Hover   */
+static const ImVec4 kRedDark = {0.78f, 0.14f, 0.14f, 1.00f};  /* 深压红  Active  */
+static const ImVec4 kRedDim  = {0.86f, 0.18f, 0.18f, 0.60f};  /* 半透红  系统消息 */
 static const ImVec4 kWhite   = {1.00f, 1.00f, 1.00f, 1.00f};  /* 白色    按钮文字 */
-static const ImVec4 kGray    = {0.46f, 0.46f, 0.46f, 1.00f};  /* 次要灰  */
+static const ImVec4 kGray    = {0.60f, 0.61f, 0.63f, 1.00f};  /* 次要灰  */
 
 /* ------------------------------------------------------------------ */
 /*  渲染单条聊天消息：系统消息直接着色；聊天消息左侧显示头像和昵称        */
@@ -21,7 +21,7 @@ static const ImVec4 kGray    = {0.46f, 0.46f, 0.46f, 1.00f};  /* 次要灰  */
 void ChatUI::RenderChatMsg(const ChatLine& msg)
 {
     if (msg.kind == ChatLine::Kind::SYSTEM) {
-        ImGui::TextColored(kRedDim, "%s", msg.text.c_str());
+        ImGui::TextColored(kGray, "%s", msg.text.c_str());
         return;
     }
 
@@ -698,8 +698,8 @@ void ChatUI::RenderLoginPage(ChatNetworkClient& net)
     ImGui::BeginChild("##login_panel", ImVec2(panel_w, panel_h), true);
 
     // 标题
-    ImGui::SetCursorPosX((panel_w - 20 - ImGui::CalcTextSize("Redflag Chat").x) * 0.5f);
-    ImGui::TextColored(kWhite, "Redflag Chat");
+    ImGui::SetCursorPosX((panel_w - 20 - ImGui::CalcTextSize("Redflag Chat Client").x) * 0.5f);
+    ImGui::TextColored(kWhite, "Redflag Chat Client");
     ImGui::Separator();
     ImGui::Spacing();
 

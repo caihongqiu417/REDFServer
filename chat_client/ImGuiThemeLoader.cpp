@@ -92,6 +92,16 @@ static void ApplyStyleFloat(ImGuiStyle& s, const char* name, float val)
     fprintf(stderr, "[Theme] 未知 style float 字段: %s\n", name);
 }
 
+static void ApplyStyleVec2(ImGuiStyle& s, const char* name, float x, float y)
+{
+    if (!strcmp(name, "WindowPadding"))     { s.WindowPadding     = ImVec2(x,y); return; }
+    if (!strcmp(name, "FramePadding"))      { s.FramePadding      = ImVec2(x,y); return; }
+    if (!strcmp(name, "ItemSpacing"))       { s.ItemSpacing        = ImVec2(x,y); return; }
+    if (!strcmp(name, "ItemInnerSpacing"))  { s.ItemInnerSpacing   = ImVec2(x,y); return; }
+    if (!strcmp(name, "WindowTitleAlign"))  { s.WindowTitleAlign   = ImVec2(x,y); return; }
+    fprintf(stderr, "[Theme] 未知 style vec2 字段: %s\n", name);
+}
+
 /* ------------------------------------------------------------------ */
 /*  LoadImGuiTheme — 公开接口                                          */
 /* ------------------------------------------------------------------ */
@@ -116,7 +126,7 @@ bool LoadImGuiTheme(const char* xml_path)
     ImGuiStyle& style = ImGui::GetStyle();
     int color_count = 0, style_count = 0;
 
-    /* ---- 解析 <style> 浮点参数 ---- */
+    /* ---- 解析 <style> 浮点参数和 Vec2 参数 ---- */
     XMLElement* styleElem = root->FirstChildElement("style");
     if (styleElem) {
         for (XMLElement* f = styleElem->FirstChildElement("float");
@@ -124,10 +134,15 @@ bool LoadImGuiTheme(const char* xml_path)
         {
             const char* name = f->Attribute("name");
             float val = f->FloatAttribute("value");
-            if (name) {
-                ApplyStyleFloat(style, name, val);
-                style_count++;
-            }
+            if (name) { ApplyStyleFloat(style, name, val); style_count++; }
+        }
+        for (XMLElement* v = styleElem->FirstChildElement("vec2");
+             v; v = v->NextSiblingElement("vec2"))
+        {
+            const char* name = v->Attribute("name");
+            float x = v->FloatAttribute("x");
+            float y = v->FloatAttribute("y");
+            if (name) { ApplyStyleVec2(style, name, x, y); style_count++; }
         }
     }
 
