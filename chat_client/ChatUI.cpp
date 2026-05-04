@@ -152,7 +152,7 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
          * 聊天消息（他人发送，服务器转发）
          * ======================================================== */
         case MSG_CHAT:
-            AppendMsg("[他人] " + m.body);                     // 追加到聊天记录
+            AppendMsg(m.body);                                 // body 已含 "昵称: 消息文本"
             break;
 
         default:

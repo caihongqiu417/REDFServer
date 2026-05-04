@@ -93,8 +93,13 @@ static void appln_client_msg_recvd(const TcpServerController* tcp_server,
         printf("已记录昵称: fd=%d -> \"%s\"\n", tcp_client->comm_fd, tcp_client->nickname.c_str());
     }
 
-    /* 广播：把 msg_type 一并转发，接收方能知道这条消息的类型 */
-    tcp_server->Broadcast(msg, msg_size, msg_type, tcp_client);
+    /* MSG_CHAT：在消息体前拼接 "昵称: "，让接收方能显示发送者姓名 */
+    if (msg_type == MSG_CHAT && msg_size > 0 && !tcp_client->nickname.empty()) {
+        std::string full_msg = tcp_client->nickname + ": " + std::string((char*)msg, msg_size);
+        tcp_server->Broadcast((const uint8_t*)full_msg.data(), (uint32_t)full_msg.size(), MSG_CHAT, tcp_client);
+    } else {
+        tcp_server->Broadcast(msg, msg_size, msg_type, tcp_client);
+    }
     printf("已广播 %d 字节(type=%s)给其他客户端\n", msg_size, type_str);
 }
 
