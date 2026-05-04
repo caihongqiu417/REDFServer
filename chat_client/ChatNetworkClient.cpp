@@ -245,3 +245,11 @@ void ChatNetworkClient::SendRegisterReq(const std::string& username,
     strncpy(req.pw_hash, hash.c_str(), MSG_LOGIN_PWHASH_LEN - 1);
     SendRaw(reinterpret_cast<const uint8_t*>(&req), sizeof(req), MSG_REG_REQ);
 }
+
+void ChatNetworkClient::SendProfileSetReq(const std::string& nickname, int avatar_idx)
+{
+    MsgProfileData req{};
+    strncpy(req.nickname, nickname.c_str(), sizeof(req.nickname) - 1);
+    req.avatar_idx = (uint8_t)avatar_idx;
+    SendRaw(reinterpret_cast<const uint8_t*>(&req), sizeof(req), MSG_PROFILE_SET_REQ);
+}

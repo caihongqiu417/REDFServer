@@ -32,6 +32,9 @@ public:
     void SendLoginReq(const std::string& username, const std::string& password);
     void SendRegisterReq(const std::string& username, const std::string& password);
 
+    /* 把主页改动（昵称 + 头像序号）发给服务器保存 */
+    void SendProfileSetReq(const std::string& nickname, int avatar_idx);
+
 
     /* 从主线程调用：取走所有待处理的消息 */
     std::vector<ChatMsg> Poll();

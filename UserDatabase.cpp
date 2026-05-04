@@ -43,6 +43,16 @@ bool UserDatabase::Open(const std::string& db_path)
     return false;               
     }
 
+    /* 数据库迁移：给旧版 users 表加新列。
+     * ALTER TABLE ADD COLUMN 在列已存在时会返回错误，这里直接忽略该错误。
+     * 这样无论是新建数据库还是旧数据库升级，都能正常运行。*/
+    sqlite3_exec(db_,
+        "ALTER TABLE users ADD COLUMN nickname TEXT DEFAULT ''",
+        nullptr, nullptr, nullptr);   /* 忽略返回值（列已存在时会失败，属正常） */
+    sqlite3_exec(db_,
+        "ALTER TABLE users ADD COLUMN avatar_idx INTEGER DEFAULT 0",
+        nullptr, nullptr, nullptr);
+
     fprintf(stdout, "[UserDB] 数据库已就绪: %s\n", db_path.c_str());
     return true;
 }
@@ -99,6 +109,49 @@ bool UserDatabase::AuthUser(const std::string& username,
 
     sqlite3_finalize(stmt);  // 释放语句资源
     return ok;   
+}
+
+bool UserDatabase::GetProfile(const std::string& username,
+                               std::string& out_nickname, int& out_avatar_idx)
+{
+    const char* sql =
+        "SELECT nickname, avatar_idx FROM users WHERE username = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return false;
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+
+    bool ok = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        /* sqlite3_column_text 返回该列的文本指针，可能为 NULL（列值为空时） */
+        const char* nick = reinterpret_cast<const char*>(
+                               sqlite3_column_text(stmt, 0));
+        out_nickname   = nick ? nick : "";
+        out_avatar_idx = sqlite3_column_int(stmt, 1);
+        ok = true;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool UserDatabase::SetProfile(const std::string& username,
+                               const std::string& nickname, int avatar_idx)
+{
+    /* 只更新昵称和头像序号，账号名和密码哈希不动 */
+    const char* sql =
+        "UPDATE users SET nickname = ?, avatar_idx = ? WHERE username = ?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return false;
+
+    sqlite3_bind_text(stmt, 1, nickname.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_int (stmt, 2, avatar_idx);
+    sqlite3_bind_text(stmt, 3, username.c_str(), -1, SQLITE_STATIC);
+
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE;
 }
 
 void UserDatabase::Close() {

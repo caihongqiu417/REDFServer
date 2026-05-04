@@ -17,6 +17,9 @@ public:
     /* 传入三张图标的 OpenGL 纹理 ID */
     void SetIcons(unsigned int world, unsigned int friend_icon, unsigned int private_icon);
 
+    /* 传入头像纹理数组（由 main.cpp 从 Avatar 目录 PNG 头文件加载） */
+    void SetAvatars(unsigned int* textures, int count);
+
 private:
     /* ================================================================
      * 界面状态
@@ -32,6 +35,17 @@ private:
     unsigned int icon_world_   = 0;
     unsigned int icon_friend_  = 0;
     unsigned int icon_private_ = 0;
+
+    /* 头像纹理数组 */
+    static const int MAX_AVATARS = 16;
+    unsigned int avatar_textures_[MAX_AVATARS] = {};
+    int          avatar_count_   = 0;
+    int          current_avatar_ = 0;  /* 当前使用的头像序号（0 = 第一张） */
+
+    /* 主页弹窗状态 */
+    bool open_profile_       = false; /* true 时下一帧打开弹窗 */
+    int  profile_sel_avatar_ = 0;     /* 弹窗里临时选中的头像，保存前不影响 current_avatar_ */
+    char profile_nick_buf_[64] = {};  /* 弹窗里临时编辑的昵称，保存前不影响 nick_buf_ */
 
     bool  joined_        = false;                  // 是否已发送 MSG_JOIN
     bool  wants_quit_    = false;                  // 用户是否点了退出
@@ -60,6 +74,7 @@ private:
     void RenderLoginBar(ChatNetworkClient& net);
     void RenderPlayerList();
     void RenderChatArea(ChatNetworkClient& net);
+    void RenderProfileModal(ChatNetworkClient& net); // 主页弹窗（头像选择 + 昵称修改）
 
     /* ================================================================
      * 工具函数

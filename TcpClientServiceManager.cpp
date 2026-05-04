@@ -129,6 +129,64 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
             uint16_t rsp_type = (msg_type == MSG_REG_REQ) ? MSG_REG_RSP : MSG_LOGIN_RSP;
             msg_send(client->comm_fd, (const uint8_t*)&rsp, sizeof(rsp), rsp_type);
 
+            /* 登录成功后紧接着推送用户已保存的昵称和头像序号。
+             * 注册成功时也推送（昵称默认空，头像默认 0），让客户端完成状态初始化。
+             * 这条消息在 MSG_LOGIN_RSP 之后立刻发出，TCP 保证客户端按序收到。*/
+            if (rsp.result == 1) {
+                std::string saved_nick;
+                int         saved_avatar = 0;
+                /* client->username 在登录成功的内层 if(ok) 里已赋值 */
+                svc_mgr->user_db_.GetProfile(client->username, saved_nick, saved_avatar);
+
+                MsgProfileData prof{};
+                /* 若从未设置过昵称，默认用账号名，让玩家列表有可读显示 */
+                if (saved_nick.empty()) saved_nick = client->username;
+                strncpy(prof.nickname, saved_nick.c_str(),
+                        sizeof(prof.nickname) - 1);
+                prof.avatar_idx = (uint8_t)saved_avatar;
+
+                msg_send(client->comm_fd,
+                         (const uint8_t*)&prof, sizeof(prof),
+                         MSG_PROFILE_RSP);
+                printf("[主页] 已推送 profile 给 %s: 昵称=\"%s\" 头像=%d\n",
+                       client->username.c_str(), saved_nick.c_str(), saved_avatar);
+            }
+
+        } else if (msg_type == MSG_PROFILE_SET_REQ) {
+            /* ---------- 客户端保存主页（昵称 + 头像序号） ---------- */
+            MsgLoginRsp rsp{};   /* 复用登录响应结构体：result(1B) + reason(63B) */
+
+            if (body_len < sizeof(MsgProfileData)) {
+                rsp.result = 0;
+                strncpy(rsp.reason, "包体长度错误", sizeof(rsp.reason) - 1);
+            } else if (client->auth_state != TcpClient::AuthState::AUTHED) {
+                rsp.result = 0;
+                strncpy(rsp.reason, "未登录", sizeof(rsp.reason) - 1);
+            } else {
+                MsgProfileData req{};
+                memcpy(&req, buf + MSG_HDR_SIZE, sizeof(MsgProfileData));
+                req.nickname[sizeof(req.nickname) - 1] = '\0';   /* 防越界 */
+
+                std::string new_nick(req.nickname);
+                int         new_avatar = req.avatar_idx;
+
+                bool ok = svc_mgr->user_db_.SetProfile(
+                              client->username, new_nick, new_avatar);
+                rsp.result = ok ? 1 : 0;
+                if (!ok)
+                    strncpy(rsp.reason, "数据库写入失败", sizeof(rsp.reason) - 1);
+
+                if (ok && !new_nick.empty())
+                    client->nickname = new_nick;   /* 同步内存中的昵称 */
+
+                printf("[主页] %s 更新 nickname=\"%s\" avatar=%d %s\n",
+                       client->username.c_str(), new_nick.c_str(),
+                       new_avatar, ok ? "OK" : "FAIL");
+            }
+            msg_send(client->comm_fd,
+                     (const uint8_t*)&rsp, sizeof(rsp),
+                     MSG_PROFILE_SET_RSP);
+
         } else if (svc_mgr->tcp_ctrl->client_msg_recvd) {
             /* ---------- 其他业务消息（聊天/加入/离开等） ---------- */
             if (client->auth_state != TcpClient::AuthState::AUTHED) {

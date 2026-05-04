@@ -40,6 +40,11 @@ typedef enum : uint16_t {
     MSG_LOGIN_RSP   = 8,   /* 服务器→客户端：登陆响应，body = MsgLoginRsp  (64B) */
     MSG_REG_REQ     = 9,   /* 客户端→服务器：注册请求，body = MsgLoginReq  (96B，复用) */
     MSG_REG_RSP     = 10,  /* 服务器→客户端：注册响应，body = MsgLoginRsp  (64B，复用) */
+
+    /* -------- 用户主页（昵称 + 头像） -------- */
+    MSG_PROFILE_RSP     = 18, /* 服务器→客户端：登录后推送已保存的昵称和头像序号，body = MsgProfileData (68B) */
+    MSG_PROFILE_SET_REQ = 19, /* 客户端→服务器：保存主页改动，body = MsgProfileData (68B) */
+    MSG_PROFILE_SET_RSP = 20, /* 服务器→客户端：保存结果，body = MsgLoginRsp (64B，复用 result+reason) */
 } MsgType;
 
 
@@ -71,6 +76,22 @@ typedef struct {
 /* 断言：确保结构体尺寸符合预期（编译期检查） */
 static_assert(sizeof(MsgLoginReq) == 96, "MsgLoginReq size mismatch");
 static_assert(sizeof(MsgLoginRsp) == 64, "MsgLoginRsp size mismatch");
+
+/* ------------------------------------------------------------------ */
+/*  主页数据结构（双向复用：服务器下发 / 客户端上传均用此结构）           */
+/* ------------------------------------------------------------------ */
+#define MSG_PROFILE_NICK_LEN 64   /* 昵称最大字节数（含 \0） */
+
+#pragma pack(push, 1)
+typedef struct {
+    char    nickname[MSG_PROFILE_NICK_LEN]; /* 昵称，UTF-8，右补 \0 */
+    uint8_t avatar_idx;                     /* 头像序号，0 = 第一张 */
+    uint8_t _pad[3];                        /* 补齐到 4 字节倍数 */
+} MsgProfileData;                           /* 共 68 字节 */
+#pragma pack(pop)
+
+static_assert(sizeof(MsgProfileData) == 68, "MsgProfileData size mismatch");
+/* MSG_PROFILE_SET_RSP 的 body 直接复用 MsgLoginRsp（result + reason） */
 
 
 

@@ -57,7 +57,18 @@ void ChatUI::Render(ChatNetworkClient& net)
         ImGuiWindowFlags_NoMove     |               // 禁止拖拽标题栏移动
         ImGuiWindowFlags_NoScrollbar);              // 窗口本身不显示滚动条
 
-    /* 3. 根据当前状态显示不同界面 */
+    /* 3. 主页弹窗触发
+     * 思路：ImGui 的 Popup 系统要求 OpenPopup 与 BeginPopupModal 在同一窗口层级里调用。
+     * "GameChat" 是最外层窗口，所以弹窗的控制逻辑放在这里最安全。
+     * open_profile_ 由子窗口（侧边栏）里的头像按钮设置，
+     * 这里检测到后调用 OpenPopup，再每帧调用 RenderProfileModal 渲染弹窗内容。*/
+    if (open_profile_) {
+        ImGui::OpenPopup("##profile_modal");
+        open_profile_ = false;   /* 重置标志，防止重复打开 */
+    }
+    RenderProfileModal(net);     /* 每帧都调用；弹窗关闭时内部立刻返回，几乎零开销 */
+
+    /* 4. 根据当前状态显示不同界面 */
     if (ui_state_ == UiState::LOGIN || ui_state_ == UiState::WAITING) {
         RenderLoginPage(net);
     } else {
@@ -175,6 +186,38 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
             AppendMsg(m.body);                                 // body 已含 "昵称: 消息文本"
             break;
 
+        /* 服务器登录后推送的主页数据（昵称 + 头像序号） */
+        case MSG_PROFILE_RSP: {
+            if (m.body.size() < sizeof(MsgProfileData)) break;
+            MsgProfileData prof{};
+            memcpy(&prof, m.body.data(), sizeof(MsgProfileData));
+            prof.nickname[sizeof(prof.nickname) - 1] = '\0';
+
+            /* 用服务器存的数据覆盖本地（服务器是权威来源） */
+            strncpy(nick_buf_,          prof.nickname, sizeof(nick_buf_)          - 1);
+            strncpy(profile_nick_buf_,  prof.nickname, sizeof(profile_nick_buf_)  - 1);
+            current_avatar_     = prof.avatar_idx;
+            profile_sel_avatar_ = prof.avatar_idx;
+            break;
+        }
+
+        /* 服务器返回的主页保存结果 */
+        case MSG_PROFILE_SET_RSP: {
+            if (m.body.size() < sizeof(MsgLoginRsp)) break;
+            MsgLoginRsp rsp{};
+            memcpy(&rsp, m.body.data(), sizeof(MsgLoginRsp));
+            rsp.reason[sizeof(rsp.reason) - 1] = '\0';
+            if (rsp.result == 1) {
+                AppendMsg("[系统] 主页已保存");
+            } else {
+                AppendMsg(std::string("[系统] 主页保存失败: ") + rsp.reason);
+                /* 保存失败：回滚本地状态，避免客户端与服务器不一致 */
+                strncpy(nick_buf_,      profile_nick_buf_, sizeof(nick_buf_)      - 1);
+                current_avatar_ = profile_sel_avatar_;
+            }
+            break;
+        }
+
         default:
             break;                                             // 未知消息类型，忽略
         }
@@ -187,16 +230,17 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
 void ChatUI::RenderLoginBar(ChatNetworkClient& net)
 {
     if (!joined_) {
-        /* "昵称:" 标签 → 红色 */
-        ImGui::TextColored(kRed, "昵称:");
+        /* 昵称来自主页设置，这里只读显示，不可编辑 */
+        ImGui::TextColored(kGray, "昵称:");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(160.0f);
-        ImGui::InputText("##nick", nick_buf_, sizeof(nick_buf_));
+        if (nick_buf_[0] != '\0') {
+            ImGui::TextColored(kRed, "%s", nick_buf_);
+        } else {
+            ImGui::TextColored(kGray, "（请在主页设置昵称）");
+        }
         ImGui::SameLine();
 
         bool can_join = net.IsConnected() && nick_buf_[0] != '\0';
-
-        /* Join 按钮：红底白字 */
         ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
         if (ImGui::Button("Join") && can_join) {
             net.SendJoin(nick_buf_);
@@ -207,11 +251,10 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
         }
         ImGui::PopStyleColor();
 
+        ImGui::SameLine();
         if (!net.IsConnected()) {
-            ImGui::SameLine();
             ImGui::TextColored(kRedHov, "● 未连接");
         } else {
-            ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.10f, 0.78f, 0.10f, 1.00f), "●");
             ImGui::SameLine();
             ImGui::Text(" 已连接");
@@ -318,6 +361,13 @@ void ChatUI::SetIcons(unsigned int world, unsigned int friend_icon, unsigned int
     icon_private_ = private_icon;
 }
 
+void ChatUI::SetAvatars(unsigned int* textures, int count)
+{
+    avatar_count_ = (count > MAX_AVATARS) ? MAX_AVATARS : count;
+    for (int i = 0; i < avatar_count_; i++)
+        avatar_textures_[i] = textures[i];
+}
+
 /* ------------------------------------------------------------------ */
 /*  左侧导航栏                                                          */
 /* ------------------------------------------------------------------ */
@@ -377,6 +427,65 @@ void ChatUI::RenderNavSidebar()
         dl->AddImage((void*)(uintptr_t)(*t.tex), icon_min, icon_max);
 
         cursor_y += radius * 2.0f + 12.0f;   /* 下一个图标的起始 y */
+    }
+
+    /* ================================================================
+     * 底部头像入口
+     * 思路：
+     *   导航栏高度固定（-1 = 撑满父窗口），所以可以用 GetWindowHeight()
+     *   取到整条侧边栏的像素高度，再从底部往上留 10px 定位头像圆心。
+     *
+     *   头像用 AddImageRounded 画成圆形：
+     *     rounding 参数等于半径时，图片的四个角恰好被裁成圆弧，
+     *     整体看起来就是一个圆形头像，无需额外裁剪。
+     *
+     *   点击时把当前昵称/头像序号复制到"临时编辑缓冲"，
+     *   再设 open_profile_=true，下一帧 Render() 会开启弹窗。
+     * ================================================================ */
+    {
+        const float av_r  = 22.0f;                          /* 头像圆半径，单位像素 */
+        const float av_cx = sidebar_w * 0.5f;               /* 侧边栏水平中心 */
+        /* win_h 是当前子窗口（侧边栏）的完整像素高度 */
+        float win_h   = ImGui::GetWindowHeight();
+        /* 头像顶部 y（相对于子窗口左上角） */
+        float av_ytop = win_h - av_r * 2.0f - 10.0f;
+
+        /* InvisibleButton：ImGui 用于捕捉鼠标事件的不可见矩形区域。
+         * 大小与头像圆恰好吻合，点击时触发 IsItemClicked()。*/
+        /* SetCursorPos 设置相对坐标后，立刻调用 GetCursorScreenPos()，
+         * 让 ImGui 把相对坐标转成屏幕绝对坐标（自动处理窗口偏移和内边距）。
+         * 这比手动用 GetWindowPos() + 偏移量更准确，不会受子窗口内边距影响。*/
+        ImGui::SetCursorPos(ImVec2(av_cx - av_r, av_ytop));
+        ImVec2 av_min = ImGui::GetCursorScreenPos();   /* 头像矩形左上角的屏幕坐标 */
+        ImGui::InvisibleButton("##avatar_entry", ImVec2(av_r * 2.0f, av_r * 2.0f));
+        bool av_hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) {
+            strncpy(profile_nick_buf_, nick_buf_, sizeof(profile_nick_buf_) - 1);
+            profile_sel_avatar_ = current_avatar_;
+            open_profile_ = true;
+        }
+        if (av_hovered) ImGui::SetTooltip("我的主页");
+
+        /* 圆心 = 矩形左上角 + 半径，所以图片恰好填满 InvisibleButton 区域 */
+        ImVec2 avctr = { av_min.x + av_r, av_min.y + av_r };
+
+        if (avatar_count_ > 0) {
+            /* AddImageRounded：rounding = av_r（= 图片边长一半）时裁成完整圆形 */
+            dl->AddImageRounded(
+                (void*)(uintptr_t)avatar_textures_[current_avatar_],
+                av_min,
+                ImVec2(av_min.x + av_r * 2.0f, av_min.y + av_r * 2.0f),
+                ImVec2(0, 0), ImVec2(1, 1),
+                IM_COL32(255, 255, 255, 255), av_r
+            );
+        } else {
+            dl->AddCircleFilled(avctr, av_r, IM_COL32(80, 80, 80, 200), 48);
+        }
+
+        ImU32 ring = av_hovered
+            ? IM_COL32(255, 255, 255, 180)
+            : IM_COL32(160, 160, 160, 120);
+        dl->AddCircle(avctr, av_r, ring, 48, av_hovered ? 2.0f : 1.5f);
     }
 }
 
@@ -502,4 +611,188 @@ std::vector<std::string> ChatUI::ParsePlayerList(const std::string& body)
         offset += slen;
     }
     return result;
+}
+
+/* ================================================================
+ * 主页弹窗
+ * 思路：
+ *   弹窗分两列：
+ *     左列（宽约 110px）：大号头像预览 + 用户名（账号）显示
+ *     右列（剩余宽度）  ：头像选择网格 + 昵称输入框 + 保存/取消按钮
+ *
+ *   头像网格：把所有头像缩略图排成一行（或多行），点击选中高亮。
+ *     高亮用 DrawList->AddRect 在缩略图外面画红色边框实现，
+ *     不需要改按钮样式，Push/Pop 更少，更安全。
+ *
+ *   保存逻辑（当前阶段只存本地，服务器同步在下一步实现）：
+ *     把 profile_nick_buf_ 写回 nick_buf_，
+ *     把 profile_sel_avatar_ 写回 current_avatar_，
+ *     然后关闭弹窗。
+ *
+ *   BeginPopupModal 的特点：
+ *     - 调用后会阻断背景窗口的输入（背景变暗），用户只能操作弹窗
+ *     - 关闭方式：调用 ImGui::CloseCurrentPopup()
+ * ================================================================ */
+void ChatUI::RenderProfileModal(ChatNetworkClient& net)
+{
+    /* BeginPopupModal 返回 false 说明弹窗当前没有打开，直接返回 */
+    ImGuiIO& io   = ImGui::GetIO();
+    ImVec2 msz    = ImVec2(480.0f, 300.0f);   /* 弹窗尺寸 */
+
+    /* 每次弹窗打开时强制居中（ImGuiCond_Always = 每帧都设置） */
+    ImGui::SetNextWindowPos(
+        ImVec2((io.DisplaySize.x - msz.x) * 0.5f,
+               (io.DisplaySize.y - msz.y) * 0.5f),
+        ImGuiCond_Always);
+    ImGui::SetNextWindowSize(msz);
+
+    if (!ImGui::BeginPopupModal("##profile_modal", nullptr,
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize   |
+            ImGuiWindowFlags_NoMove))
+        return;   /* 弹窗未打开，什么都不做 */
+
+    ImDrawList* dl  = ImGui::GetWindowDrawList();
+
+    /* ---- 标题栏区域 ---- */
+    ImGui::Spacing();
+    ImGui::SetCursorPosX(14.0f);
+    ImGui::TextColored(kRed, "我的主页");
+    ImGui::SameLine(msz.x - 28.0f);
+    /* 右上角关闭：把按钮四种状态的背景色全部设为透明，只剩红色文字 "×" */
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0,0,0,0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0,0,0,0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0,0,0,0));
+    ImGui::PushStyleColor(ImGuiCol_Text,          kRed);
+    if (ImGui::Button(u8"\xc3\x97##close_profile"))   /* × = UTF-8 U+00D7 */
+        ImGui::CloseCurrentPopup();
+    ImGui::PopStyleColor(4);
+    ImGui::Separator();
+
+    /* ================================================================
+     * 左列：头像大图预览 + 账号名
+     * 宽度固定 110px，用 BeginChild 隔离布局，防止影响右列坐标计算
+     * ================================================================ */
+    ImGui::BeginChild("##prof_left", ImVec2(110.0f, -1), false);
+    {
+        const float pv_r  = 40.0f;
+        const float pv_cx = 55.0f;   /* 左列宽 110 / 2 */
+
+        /* 垂直居中：左列可用高度一半减去头像半径，得到头像顶部 y。
+         * GetContentRegionAvail().y 返回当前子窗口内剩余可绘制高度。*/
+        float col_h  = ImGui::GetContentRegionAvail().y;
+        float top_y  = (col_h - pv_r * 2.0f) * 0.5f;   /* 居中 y（相对子窗口） */
+        if (top_y < 4.0f) top_y = 4.0f;                 /* 至少留 4px 顶部间距 */
+
+        ImGui::SetCursorPos(ImVec2(pv_cx - pv_r, top_y));
+        ImVec2 pv_min = ImGui::GetCursorScreenPos();
+        ImVec2 pvctr  = { pv_min.x + pv_r, pv_min.y + pv_r };
+
+        /* 子窗口内调用 GetWindowDrawList，返回带正确裁剪区的画布 */
+        ImDrawList* cdl = ImGui::GetWindowDrawList();
+        if (avatar_count_ > 0 && profile_sel_avatar_ < avatar_count_) {
+            cdl->AddImageRounded(
+                (void*)(uintptr_t)avatar_textures_[profile_sel_avatar_],
+                pv_min,
+                ImVec2(pv_min.x + pv_r * 2.0f, pv_min.y + pv_r * 2.0f),
+                ImVec2(0, 0), ImVec2(1, 1),
+                IM_COL32(255, 255, 255, 255), pv_r);
+            cdl->AddCircle(pvctr, pv_r, IM_COL32(194, 13, 13, 200), 48, 2.0f);
+        }
+
+        /* Dummy 占位：告知 ImGui 这片空间已被头像占用，光标跳过去 */
+        ImGui::Dummy(ImVec2(pv_r * 2.0f, pv_r * 2.0f + 10.0f));
+        ImGui::SetCursorPosX(4.0f);
+        ImGui::TextColored(kGray, "@%s", user_buf_[0] ? user_buf_ : "unknown");
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    /* ================================================================
+     * 右列：头像选择网格 + 昵称输入 + 操作按钮
+     * ================================================================ */
+    ImGui::BeginChild("##prof_right", ImVec2(-1, -1), false);
+    {
+        /* ---- 头像网格 ---- */
+        ImGui::TextColored(kGray, "选择头像");
+        const float thumb = 44.0f;   /* 缩略图边长 */
+        const float gap   = 6.0f;    /* 缩略图间距 */
+        float avail_w     = ImGui::GetContentRegionAvail().x;
+        /* 每行能放几个缩略图（向下取整） */
+        int per_row = (int)((avail_w + gap) / (thumb + gap));
+        if (per_row < 1) per_row = 1;
+
+        for (int i = 0; i < avatar_count_; i++) {
+            int col = i % per_row;
+            if (col == 0 && i > 0) {
+                /* 换行：ImGui 默认每个控件后换行，SameLine 让同行控件不换 */
+            } else if (col > 0) {
+                ImGui::SameLine(0.0f, gap);
+            }
+
+            /* 选中时：在缩略图外画红框（用 DrawList，不影响 Push/Pop 栈） */
+            if (profile_sel_avatar_ == i) {
+                ImVec2 sp = ImGui::GetCursorScreenPos();   /* 当前绘制位置屏幕坐标 */
+                dl->AddRect(
+                    ImVec2(sp.x - 2, sp.y - 2),
+                    ImVec2(sp.x + thumb + 2, sp.y + thumb + 2),
+                    IM_COL32(194, 13, 13, 220), 4.0f, 0, 2.0f
+                );
+            }
+
+            char btn_id[16];
+            snprintf(btn_id, sizeof(btn_id), "##av_%d", i);
+            /* PushStyleVar FramePadding=(0,0)：消除 ImageButton 的内边距，
+             * 让图片完整填满按钮区域而不是缩小显示在左上角。
+             * 配合上面 AddRect 的 sp+thumb 计算，选中框大小与图片完全对齐。*/
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+            if (ImGui::ImageButton(btn_id,
+                    (void*)(uintptr_t)avatar_textures_[i],
+                    ImVec2(thumb, thumb),
+                    ImVec2(0, 0), ImVec2(1, 1),
+                    ImVec4(0, 0, 0, 0)))
+                profile_sel_avatar_ = i;
+            ImGui::PopStyleVar();
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        /* ---- 昵称输入 ---- */
+        ImGui::TextColored(kGray, "昵称");
+        ImGui::SetNextItemWidth(-1);   /* -1 = 占满右列剩余宽度 */
+        ImGui::InputText("##pnick", profile_nick_buf_, sizeof(profile_nick_buf_));
+
+        ImGui::Spacing();
+
+        /* ---- 保存 / 取消 ---- */
+        const float btn_w = 80.0f;
+        /* 按钮居右：从右边留 btn_w*2+gap 的位置开始 */
+        ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - btn_w * 2.0f - gap);
+
+        ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
+
+        bool can_save = profile_nick_buf_[0] != '\0';
+        if (ImGui::Button("保存##prof", ImVec2(btn_w, 0)) && can_save) {
+            /* 立即更新本地显示（乐观更新：先改界面，等服务器确认）。
+             * 若服务器返回失败，MSG_PROFILE_SET_RSP 处理里会回滚。 */
+            strncpy(nick_buf_, profile_nick_buf_, sizeof(nick_buf_) - 1);
+            current_avatar_ = profile_sel_avatar_;
+            /* 发给服务器保存，结果由 HandleIncoming 的 MSG_PROFILE_SET_RSP 分支处理 */
+            net.SendProfileSetReq(std::string(profile_nick_buf_), profile_sel_avatar_);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine(0.0f, gap);
+        if (ImGui::Button("取消##prof", ImVec2(btn_w, 0))) {
+            /* 丢弃临时修改，不写回正式变量 */
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::PopStyleColor();
+    }
+    ImGui::EndChild();
+
+    ImGui::EndPopup();
 }
