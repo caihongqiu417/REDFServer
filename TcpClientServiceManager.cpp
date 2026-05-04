@@ -18,84 +18,160 @@
 #include "msg_protocol.h"
 
 /*
- * process_recv: 从 tcp_client 的 fd 读数据，写入 per-client 缓冲区，
- *               循环解包并回调，处理粘包与半包。
- * 返回值与 recv() 语义相同：>0 正常，0 对端关闭，-1 错误。
+ * process_recv: 从客户端 fd 读数据到缓冲区，循环拆包处理，解决粘包与半包。
+ *
+ * 粘包处理：一次 recv() 可能收到多条消息，while 循环逐条拆解。
+ * 半包处理：缓冲区数据不足一条完整消息时 break，等下次 recv() 补全。
+ * 消息分流：心跳包内部消化；登录/注册直接查库回复；其余转交上层回调。
+ *
+ * 参数：
+ *   svc_mgr - 服务管理器指针（含用户库、控制器等）
+ *   client  - 当前正在读取的客户端对象
+ *
+ * 返回值与 recv() 语义相同：
+ *   >0  本次读取正常（消息回调已在内部触发）
+ *    0  对端正常关闭连接
+ *   -1  错误（包括协议错误、对端断开等），调用处应清理该客户端
  */
 static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
 {
-    uint8_t  *buf     = client->recv_buf;
-    uint32_t &used    = client->recv_buf_used;
-    uint32_t  buf_cap = (uint32_t)sizeof(client->recv_buf);
+    /* 客户端专属的接收缓冲区及其使用量、总容量 */
+    uint8_t  *buf     = client->recv_buf;                // 缓冲区起始地址
+    uint32_t &used    = client->recv_buf_used;           // 已使用字节数（引用，修改即改 client）
+    uint32_t  buf_cap = (uint32_t)sizeof(client->recv_buf); // 缓冲区总容量
 
-    /* 1. 读取数据到缓冲区剩余空间 */
-    int n = recv(client->comm_fd, buf + used, buf_cap - used, 0);
-    if (n <= 0) return n;   /* 0=对端关闭，-1=错误，交给调用处处理 */
-    used += (uint32_t)n;
+    /* ===== 第 1 步：从 socket 读数据到缓冲区剩余空间 ===== */
+    int n = recv(client->comm_fd,                       // 客户端 socket
+                 buf + used,                            // 写入位置：已用区域之后
+                 buf_cap - used,                        // 最多读：剩余空间
+                 0);
+    if (n <= 0) return n;                               // 0=对端关闭，-1=错误，直接返回
+    used += (uint32_t)n;                                // 更新已用字节数
 
-    /* 2. 循环解包（一次 recv 可能带来多条完整消息） */
-    while (used >= MSG_HDR_SIZE)
+    /* ===== 第 2 步：循环拆包（一次 recv 可能带回多条完整消息）===== */
+    while (used >= MSG_HDR_SIZE)                         // 至少要有 6 字节包头
     {
-        /* 2a. 读包头前4字节 → body长度 */
+        /* --- 2a. 解析包头前 4 字节：消息体长度（网络字节序→主机） --- */
         uint32_t body_len;
         memcpy(&body_len, buf, sizeof(uint32_t));
         body_len = ntohl(body_len);
 
-        /* 2b. 读包头第5-6字节 → 消息类型 */
+        /* --- 2b. 解析包头第 5-6 字节：消息类型（网络字节序→主机） --- */
         uint16_t msg_type;
         memcpy(&msg_type, buf + sizeof(uint32_t), sizeof(uint16_t));
         msg_type = ntohs(msg_type);
 
-        /* 防御：包体长度超出协议上限 → 协议错误，断开 */
+        /* --- 2c. 防御：消息体长度超出协议上限 → 协议错误，断开 --- */
         if (body_len > MSG_MAX_BODY) {
             printf("[process_recv] protocol error: body_len=%u > MAX=%u, fd=%d\n",
                    body_len, MSG_MAX_BODY, client->comm_fd);
-            used = 0;
-            return -1;
+            used = 0;                                    // 清空缓冲区，丢弃脏数据
+            return -1;                                   // 返回错误，调用处会清理连接
         }
 
-        uint32_t full_len = MSG_HDR_SIZE + body_len;
+        uint32_t full_len = MSG_HDR_SIZE + body_len;     // 一条完整消息 = 包头 + 包体
 
-        /* 2c. 半包：完整消息尚未到达，等下次 recv */
+        /* --- 2d. 半包检测：数据不够一条完整消息，退出循环等下次 recv --- */
         if (used < full_len) break;
 
-        /* 2d. 完整消息就绪 */
+        /* ================================================================
+         * 2e. 完整消息就绪，按类型分流处理
+         * ================================================================ */
+
         if (msg_type == MSG_HEARTBEAT) {
-            /* 心跳包：刷新时间戳，不上报给应用层 */
-            client->last_heartbeat_time = time(nullptr);
+            /* ---------- 心跳包：只刷新存活时间，不上报 ---------- */
+            client->last_heartbeat_time = time(nullptr);  // 更新最后心跳时间
             printf("[心跳] 收到客户端心跳, fd=%d\n", client->comm_fd);
+
+        } else if (msg_type == MSG_LOGIN_REQ || msg_type == MSG_REG_REQ) {
+            /* ---------- 登录/注册：解析 → 查数据库 → 回复 ---------- */
+            MsgLoginRsp rsp{};                            // 响应结构体，默认 result=0
+
+            if (body_len < sizeof(MsgLoginReq)) {
+                // 包体太短，连请求结构体都装不下
+                rsp.result = 0;
+                strncpy(rsp.reason, "包体长度错误", sizeof(rsp.reason) - 1);
+            } else {
+                // 拷贝出请求数据
+                MsgLoginReq req{};
+                memcpy(&req, buf + MSG_HDR_SIZE, sizeof(MsgLoginReq));
+
+                // 强制末尾置 \0，防止字符串越界
+                req.username[MSG_LOGIN_USERNAME_LEN - 1] = '\0';
+                req.pw_hash [MSG_LOGIN_PWHASH_LEN  - 1] = '\0';
+
+                std::string uname(req.username);          // 用户名
+                std::string pwhash(req.pw_hash);          // SHA-256 哈希字符串
+
+                if (msg_type == MSG_REG_REQ) {
+                    /* 注册：向 users 表插入新行 */
+                    bool ok = svc_mgr->user_db_.RegisterUser(uname, pwhash);
+                    rsp.result = ok ? 1 : 0;
+                    strncpy(rsp.reason, ok ? "" : "用户名已存在", sizeof(rsp.reason) - 1);
+                    printf("[注册] 用户 %s %s, fd=%d\n", uname.c_str(),
+                           ok ? "成功" : "失败", client->comm_fd);
+                } else {
+                    /* 登录：查 users 表比对哈希值 */
+                    bool ok = svc_mgr->user_db_.AuthUser(uname, pwhash);
+                    rsp.result = ok ? 1 : 0;
+                    strncpy(rsp.reason, ok ? "" : "用户名或密码错误", sizeof(rsp.reason) - 1);
+                    if (ok) {
+                        // 登录成功：升级认证状态，记录用户名
+                        client->auth_state = TcpClient::AuthState::AUTHED;
+                        client->username   = uname;
+                    }
+                    printf("[登陆] 用户 %s %s, fd=%d\n", uname.c_str(),
+                           ok ? "成功" : "失败", client->comm_fd);
+                }
+            }
+
+            // 选择响应类型（注册响应 / 登录响应），发送给客户端
+            uint16_t rsp_type = (msg_type == MSG_REG_REQ) ? MSG_REG_RSP : MSG_LOGIN_RSP;
+            msg_send(client->comm_fd, (const uint8_t*)&rsp, sizeof(rsp), rsp_type);
+
         } else if (svc_mgr->tcp_ctrl->client_msg_recvd) {
-            /* 回调原理：tcp_ctrl->client_msg_recvd 是一个函数指针，
-             * 指向 testapp.cpp 中用 SetServerNotiCallbacks 注册的
-             * appln_client_msg_recvd 函数。调用它就等于通知应用层。 */
-            svc_mgr->tcp_ctrl->client_msg_recvd(
-                svc_mgr->tcp_ctrl,
-                client,
-                buf + MSG_HDR_SIZE,    /* 只传消息体，不含包头 */
-                (uint16_t)body_len,
-                msg_type               /* 消息类型透传给应用层 */
-            );
+            /* ---------- 其他业务消息（聊天/加入/离开等） ---------- */
+            if (client->auth_state != TcpClient::AuthState::AUTHED) {
+                // 安全拦截：未登录不得发送业务消息
+                printf("[安全] 未认证客户端发送 msg_type=%u，丢弃, fd=%d\n",
+                       msg_type, client->comm_fd);
+            } else {
+                // 已登录，合法消息，通过控制器回调转交上层处理
+                svc_mgr->tcp_ctrl->client_msg_recvd(
+                    svc_mgr->tcp_ctrl,                    // 控制器
+                    client,                               // 发送者
+                    buf + MSG_HDR_SIZE,                   // 消息体起始（跳过包头）
+                    (uint16_t)body_len,                   // 消息体长度
+                    msg_type                              // 消息类型透传
+                );
+            }
         }
 
-        /* 2d. 将剩余数据前移（处理粘包：同一次 recv 带来多条消息） */
-        used -= full_len;
+        /* ===== 第 3 步：将剩余数据前移，准备解下一条（粘包处理）===== */
+        used -= full_len;                                 // 减去已消费的字节
         if (used > 0)
-            memmove(buf, buf + full_len, used);
+            memmove(buf, buf + full_len, used);           // 剩余数据移到缓冲区开头
     }
 
-    return n;   /* 正数：本次 recv 正常 */
+    return n;                                             // 返回 recv() 的原始返回值
 }
 
 TcpClientServiceManager::TcpClientServiceManager(TcpServerController* tcp_ctrl)
 {
+    // select 相关初始化
     this->tcp_ctrl = tcp_ctrl;
     this->max_fd = 0;
     FD_ZERO(&this->active_fd_set);
     FD_ZERO(&this->backup_fd_set);
 
-    // ✅ 改为动态分配
+    // 动态分配线程 ID（不用栈上局部变量，保证生命周期）
     this->client_svc_mgr_thread = new pthread_t;
     *this->client_svc_mgr_thread = 0;  // 初始化为0
+
+    // 打开用户数据库（文件不存在时自动创建）
+    if (!user_db_.Open("users.db")) {
+        fprintf(stderr, "[ServiceManager] 警告：用户数据库打开失败！\n");
+    }
 }
 
 TcpClientServiceManager::~TcpClientServiceManager()
@@ -380,15 +456,8 @@ void TcpClientServiceManager::SendPlayerListTo(const TcpClient* new_client)
 
     char entry[256];
     for (auto* c : tcp_client_db) {
-        if (!c->nickname.empty()) {
-            /* 已收到 MSG_JOIN：用昵称 */
-            snprintf(entry, sizeof(entry), "%s", c->nickname.c_str());
-        } else {
-            /* 尚未 Join：回退到 ip:port */
-            struct in_addr addr;
-            addr.s_addr = c->ip_addr;
-            snprintf(entry, sizeof(entry), "%s:%d", inet_ntoa(addr), ntohs(c->port_no));
-        }
+        if (c->nickname.empty()) continue;  /* 未 Join 的客户端不发，避免 ip:port 污染列表 */
+        snprintf(entry, sizeof(entry), "%s", c->nickname.c_str());
 
         uint16_t slen = (uint16_t)strlen(entry);
         uint16_t net_slen = htons(slen);

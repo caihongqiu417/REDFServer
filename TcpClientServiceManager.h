@@ -4,21 +4,24 @@
 #include <pthread.h>
 #include <list> 
 #include <sys/select.h>
+#include "UserDatabase.h"
 
 class TcpServerController;
 class TcpClient;
 
 class TcpClientServiceManager
 {
-    private:
-        int max_fd;
-        fd_set active_fd_set;
-        fd_set backup_fd_set;
-        pthread_t* client_svc_mgr_thread;  // ✅ 改为指针类型
-        std::list<TcpClient*> tcp_client_db;
+     private:
+        int max_fd;                         // select 用的最大 fd 编号
+        fd_set active_fd_set;               // select 返回后有事件的 fd 集合
+        fd_set backup_fd_set;               // 完整 fd 集合的备份，每轮 select 前恢复
+        pthread_t* client_svc_mgr_thread;   // 运行管理主循环的线程
+        
+        std::list<TcpClient*> tcp_client_db;// 所有在线客户端的链表
         
     public:
-        TcpServerController* tcp_ctrl;
+        UserDatabase user_db_;              // 用户账号数据库（注册/登录用）
+        TcpServerController* tcp_ctrl;     
 
         TcpClientServiceManager(TcpServerController*);
         ~TcpClientServiceManager();

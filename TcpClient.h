@@ -22,9 +22,18 @@ class TcpClient{
          * mutable 允许在 const TcpClient* 回调中写入 */
         mutable std::string nickname;
 
+        /* 登陆成功后记录的账号名（区别于昵称 nickname） */
+        mutable std::string username;
+
+
         /* 心跳检活：上次收到心跳的时间（连接时初始化，每收到 MSG_HEARTBEAT 刷新）
          * 服务器每隔约 5s 检查一次；超过 30s 未收到心跳则视为超时，主动移除客户端 */
         time_t last_heartbeat_time;
+
+        /* 登陆认证状态：连接建立后默认 PENDING，登陆成功后变 AUTHED */
+        enum class AuthState{PENDING,AUTHED};
+        mutable AuthState auth_state = AuthState::PENDING;
+
 
         /* 粘包/半包处理：每个客户端独立的接收缓冲区 */
         uint8_t  recv_buf[MSG_HDR_SIZE + MSG_MAX_BODY];

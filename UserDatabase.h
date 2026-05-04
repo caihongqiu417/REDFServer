@@ -16,8 +16,12 @@ class UserDatabase
     // 注册新用户
     bool RegisterUser(const std::string& username,const std::string& pw_hash);
 
+    // 验证用户登录：用户名+密码哈希匹配返回 true
+    bool AuthUser(const std::string& username, const std::string& pw_hash);
+
     void Close();
 
     private:
     sqlite3* db_;
-}
+};
+#endif // USER_DATABASE_H

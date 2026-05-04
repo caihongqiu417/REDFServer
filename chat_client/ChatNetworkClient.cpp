@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <openssl/sha.h>
 
 ChatNetworkClient::ChatNetworkClient()
     : sock_fd_(-1), connected_(false), stop_recv_(false), recv_buf_used_(0),
@@ -78,13 +79,17 @@ void ChatNetworkClient::Disconnect()
     }
 }
 
-/* ------------------------------------------------------------------ */
-/*  发送原语                                                           */
-/* ------------------------------------------------------------------ */
-void ChatNetworkClient::SendRaw(const uint8_t* body, uint32_t len, uint16_t type)
+/* ================================================================
+ * 发送原语：所有客户端消息的最终出口
+ *
+ * 检查连接状态后，调用 msg_send 打包（6字节包头 + 消息体）发送给服务器
+ * ================================================================ */
+void ChatNetworkClient::SendRaw(const uint8_t* body,    // 消息体（可为 nullptr）
+                                uint32_t len,           // 消息体长度（0 表示空包体）
+                                uint16_t type)          // 消息类型（LOGIN/REG/JOIN/CHAT/HEARTBEAT...）
 {
-    if (!connected_.load() || sock_fd_ < 0) return;
-    if (msg_send(sock_fd_, body, len, type) < 0)
+    if (!connected_.load() || sock_fd_ < 0) return;     // 未连接或 socket 无效，直接丢弃
+    if (msg_send(sock_fd_, body, len, type) < 0)         // 加包头发送给服务器
         printf("[ChatNet] 发送失败, errno=%d\n", errno);
 }
 
@@ -103,15 +108,25 @@ void ChatNetworkClient::SendChat(const std::string& text)
     SendRaw((const uint8_t*)text.data(), (uint32_t)text.size(), MSG_CHAT);
 }
 
-/* ------------------------------------------------------------------ */
-/*  主线程调用：取走队列中所有待处理消息                               */
-/* ------------------------------------------------------------------ */
+/* ================================================================
+ * 取走接收队列中所有待处理消息（线程安全）
+ *
+ * 调用方：UI 主线程（每帧 Render 开头调用一次）
+ * 生产者：接收线程 RecvLoop() 不断往 incoming_ 末尾追加消息
+ *
+ * 两个线程不能同时操作 incoming_，用 queue_mutex_ 互斥锁保护。
+ * 取走后队列清空，消息由 UI 线程逐条处理（更新聊天记录、玩家列表）。
+ * ================================================================ */
 std::vector<ChatMsg> ChatNetworkClient::Poll()
 {
-    std::vector<ChatMsg> out;
-    std::lock_guard<std::mutex> lk(queue_mutex_);
-    out.assign(incoming_.begin(), incoming_.end());
-    incoming_.clear();
+    std::vector<ChatMsg> out;                            // 用于返回的消息集合
+
+    {
+        std::lock_guard<std::mutex> lk(queue_mutex_);    // 加锁，阻塞接收线程写入
+        out.assign(incoming_.begin(), incoming_.end());   // 队列中所有消息拷贝到 out
+        incoming_.clear();                               // 清空队列，腾出空间
+    }                                                    // 离开作用域，自动解锁
+
     return out;
 }
 
@@ -197,4 +212,36 @@ void ChatNetworkClient::RecvLoop()
                 memmove(recv_buf_, recv_buf_ + full_len, recv_buf_used_);
         }
     }
+}
+
+static std::string sha256hex(const std::string& input)
+{
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(input.c_str()),
+           input.size(), hash);
+    char hex[65];
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+        sprintf(hex + i * 2, "%02x", hash[i]);
+    hex[64] = '\0';
+    return std::string(hex);
+}
+
+void ChatNetworkClient::SendLoginReq(const std::string& username,
+                                     const std::string& password)
+{
+    MsgLoginReq req{};
+    strncpy(req.username, username.c_str(), MSG_LOGIN_USERNAME_LEN - 1);
+    std::string hash = sha256hex(password);
+    strncpy(req.pw_hash, hash.c_str(), MSG_LOGIN_PWHASH_LEN - 1);
+    SendRaw(reinterpret_cast<const uint8_t*>(&req), sizeof(req), MSG_LOGIN_REQ);
+}
+
+void ChatNetworkClient::SendRegisterReq(const std::string& username,
+                                        const std::string& password)
+{
+    MsgLoginReq req{};
+    strncpy(req.username, username.c_str(), MSG_LOGIN_USERNAME_LEN - 1);
+    std::string hash = sha256hex(password);
+    strncpy(req.pw_hash, hash.c_str(), MSG_LOGIN_PWHASH_LEN - 1);
+    SendRaw(reinterpret_cast<const uint8_t*>(&req), sizeof(req), MSG_REG_REQ);
 }

@@ -8,7 +8,7 @@
 #include <pthread.h>
 #include "../msg_protocol.h"
 
-/* 从服务器收到的一条完整消息 */
+// 拆协议包 → 组装成 ChatMsg（去掉包头，只留类型和消息体）
 struct ChatMsg {
     uint16_t    type;   /* MsgType 枚举值 */
     std::string body;   /* 消息体原始字节 */
@@ -28,6 +28,10 @@ public:
     void SendJoin(const std::string& nickname);
     void SendLeave(const std::string& nickname);
     void SendChat(const std::string& text);
+
+    void SendLoginReq(const std::string& username, const std::string& password);
+    void SendRegisterReq(const std::string& username, const std::string& password);
+
 
     /* 从主线程调用：取走所有待处理的消息 */
     std::vector<ChatMsg> Poll();

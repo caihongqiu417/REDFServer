@@ -9,7 +9,8 @@ OBJS=TcpClientDBManager.o \
      TcpNewConnectionAcceptor.o \
      TcpServerController.o \
      network_utils.o \
-     TcpClient.o
+     TcpClient.o \
+     UserDatabase.o
 
 # 默认目标
 all: $(TARGET)
