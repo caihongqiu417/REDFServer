@@ -154,6 +154,24 @@ void ChatUI::Render(ChatNetworkClient& net)
         ImGui::EndChild();
     }
 
+    /* 调试：右下角心跳开关，极低调样式 */
+    {
+        static bool hb_stopped = false;
+        const char* label = hb_stopped ? "hb:off" : "hb:on";
+        ImVec2 sz = ImGui::CalcTextSize(label);
+        ImVec2 win_sz = ImGui::GetWindowSize();
+        ImGui::SetCursorPos(ImVec2(win_sz.x - sz.x - 16, win_sz.y - sz.y - 10));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0,0,0,0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0,0,0,0.08f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0,0,0,0.15f));
+        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.6f,0.6f,0.6f,0.4f));
+        if (ImGui::SmallButton(label)) {
+            hb_stopped = !hb_stopped;
+            hb_stopped ? net.StopHeartbeat() : net.StartHeartbeat();
+        }
+        ImGui::PopStyleColor(4);
+    }
+
     /* 4. 结束本帧绘制 */
     ImGui::End();
 }
@@ -446,17 +464,6 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
         ImGui::SameLine();
         ImGui::TextUnformatted(nick_buf_);
 
-        /* 调试按钮：停止/恢复心跳，测试服务端超时断线 */
-        static bool hb_stopped = false;
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
-        if (!hb_stopped) {
-            if (ImGui::SmallButton("[停心跳]")) { net.StopHeartbeat();  hb_stopped = true; }
-        } else {
-            if (ImGui::SmallButton("[恢复心跳]")) { net.StartHeartbeat(); hb_stopped = false; }
-        }
-        ImGui::PopStyleColor();
-
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
 
         /* 离开世界 按钮：红底白字 */
@@ -581,6 +588,9 @@ void ChatUI::RenderChatArea(ChatNetworkClient& net)
     bool can_send = joined_ && net.IsConnected() && chat_buf_[0] != '\0';
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.80f, 0.80f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.60f, 0.60f, 0.60f, 1.0f));
     ImGui::BeginDisabled(!can_send);
     if (icon_send_) {
         if ((ImGui::ImageButton("##send_world", (void*)(uintptr_t)icon_send_,
@@ -593,6 +603,7 @@ void ChatUI::RenderChatArea(ChatNetworkClient& net)
         ImGui::PopStyleColor();
     }
     ImGui::EndDisabled();
+    ImGui::PopStyleColor(3);
     ImGui::PopStyleVar();
 }
 
@@ -1165,6 +1176,9 @@ void ChatUI::RenderPMTab(ChatNetworkClient& net)
         ImGui::SameLine(0, 4);
         bool can_send = net.IsConnected() && pm_buf_[0] != '\0';
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.80f, 0.80f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.60f, 0.60f, 0.60f, 1.0f));
         ImGui::BeginDisabled(!can_send);
         if (icon_send_) {
             if ((ImGui::ImageButton("##send_pm", (void*)(uintptr_t)icon_send_,
@@ -1177,6 +1191,7 @@ void ChatUI::RenderPMTab(ChatNetworkClient& net)
             ImGui::PopStyleColor();
         }
         ImGui::EndDisabled();
+        ImGui::PopStyleColor(3);
         ImGui::PopStyleVar();
     }
 
