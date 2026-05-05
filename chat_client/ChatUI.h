@@ -50,6 +50,9 @@ public:
     /* 传入登录页背景图纹理 */
     void SetBackground(unsigned int tex, int w, int h);
 
+    /* 传入发送按钮图标纹理 */
+    void SetSendIcon(unsigned int tex);
+
 private:
     /* ================================================================
      * 界面状态
@@ -65,6 +68,9 @@ private:
     unsigned int bg_tex_ = 0;
     int          bg_w_   = 0;
     int          bg_h_   = 0;
+
+    /* 发送按钮图标 */
+    unsigned int icon_send_ = 0;
 
     /* 图标纹理 ID（OpenGL GLuint，用 unsigned int 避免引入 GL 头文件） */
     unsigned int icon_world_   = 0;
@@ -108,6 +114,12 @@ private:
     std::map<std::string, int>                   pm_unread_;
     char pm_buf_[512] = {};
 
+    /* 查看他人主页弹窗状态 */
+    bool        open_player_profile_ = false;
+    std::string viewed_username_;
+    std::string viewed_nick_;
+    int         viewed_avatar_ = 0;
+
     /* 好友状态 */
     std::vector<FriendInfo>    friends_;          // 已接受的好友列表
     std::vector<FriendRequest> friend_requests_;  // 收到的待处理申请
@@ -130,10 +142,11 @@ private:
     void AppendMsg(const std::string& line);
     void AppendChat(const std::string& nick, const std::string& text,
                     int av, bool is_self, const std::string& sender_username = "");
-    void RenderChatMsg(const ChatLine& msg);
+    void RenderChatMsg(const ChatLine& msg, ChatNetworkClient& net);
     static std::vector<PlayerInfo> ParsePlayerList(const std::string& body);
     void TrySendChat(ChatNetworkClient& net);
     void TrySendPM(ChatNetworkClient& net);
     void RenderPMTab(ChatNetworkClient& net);
     void RenderFriendsTab(ChatNetworkClient& net);
+    void RenderPlayerProfileModal(ChatNetworkClient& net);
 };

@@ -1,8 +1,7 @@
 CC=g++
-# 修正的编译选项
 CFLAGS=-g -std=c++11 -Wall -Wextra -pthread
-TARGET:chat_app.exe tcp_client.exe tcp_client_string_sender.exe  # 添加新目标
-LIBS=-lpthread -lsqlite3 
+TARGET=chat_app tcp_client tcp_client_string_sender
+LIBS=-lpthread -lsqlite3
 
 OBJS=TcpClientDBManager.o \
      TcpClientServiceManager.o \
@@ -12,22 +11,17 @@ OBJS=TcpClientDBManager.o \
      TcpClient.o \
      UserDatabase.o
 
-# 默认目标
 all: $(TARGET)
 
-# 1. 原始客户端编译规则
-tcp_client.exe: tcp_client.o
-	$(CC) $(CFLAGS) tcp_client.o -o tcp_client.exe
+tcp_client: tcp_client.o
+	$(CC) $(CFLAGS) tcp_client.o -o tcp_client
 
-# 2. 服务器编译规则
-chat_app.exe: chat_app.o $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) chat_app.o -o chat_app.exe $(LIBS)
+chat_app: chat_app.o $(OBJS)
+	$(CC) $(CFLAGS) $(OBJS) chat_app.o -o chat_app $(LIBS)
 
-# 3. 新增：字符串发送器编译规则（用于测试TCP消息边界）
-tcp_client_string_sender.exe: tcp_client_string_sender.o
-	$(CC) $(CFLAGS) tcp_client_string_sender.o -o tcp_client_string_sender.exe
+tcp_client_string_sender: tcp_client_string_sender.o
+	$(CC) $(CFLAGS) tcp_client_string_sender.o -o tcp_client_string_sender
 
-# 源文件编译规则
 tcp_client_string_sender.o: tcp_client_string_sender.cpp
 	$(CC) $(CFLAGS) -c tcp_client_string_sender.cpp -o tcp_client_string_sender.o
 
@@ -55,10 +49,10 @@ network_utils.o: network_utils.cpp
 TcpClient.o: TcpClient.cpp
 	$(CC) $(CFLAGS) -c TcpClient.cpp -o TcpClient.o
 
-# 清理规则
-clean:
-	rm -f *.o
-	rm -f *.exe
+UserDatabase.o: UserDatabase.cpp
+	$(CC) $(CFLAGS) -c UserDatabase.cpp -o UserDatabase.o
 
-# 重新编译所有
+clean:
+	rm -f *.o *.exe chat_app tcp_client tcp_client_string_sender
+
 rebuild: clean all

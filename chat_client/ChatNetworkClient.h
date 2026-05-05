@@ -41,10 +41,15 @@ public:
     /* 好友相关 */
     void SendFriendReq(const std::string& target_username);
     void SendFriendConfirm(const std::string& requester_username, bool accept);
+    void SendFriendDelete(const std::string& target_username);
 
 
     /* 从主线程调用：取走所有待处理的消息 */
     std::vector<ChatMsg> Poll();
+
+    /* 调试用：停止/恢复心跳，用于测试服务端心跳超时断线 */
+    void StopHeartbeat()  { stop_hb_.store(true);  }
+    void StartHeartbeat() { stop_hb_.store(false); }
 
 private:
     int  sock_fd_;

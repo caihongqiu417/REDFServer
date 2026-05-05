@@ -333,6 +333,32 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
                 }
             }
 
+        } else if (msg_type == MSG_FRIEND_DELETE) {
+            /* ---------- 删除好友 ---------- */
+            if (client->auth_state != TcpClient::AuthState::AUTHED ||
+                body_len < MSG_LOGIN_USERNAME_LEN) {
+            } else {
+                char target_buf[MSG_LOGIN_USERNAME_LEN] = {};
+                memcpy(target_buf, buf + MSG_HDR_SIZE,
+                       std::min((uint32_t)MSG_LOGIN_USERNAME_LEN, body_len));
+                target_buf[MSG_LOGIN_USERNAME_LEN - 1] = '\0';
+                std::string target(target_buf);
+
+                svc_mgr->user_db_.DeleteFriend(client->username, target);
+
+                /* 通知对方（event_type=3：被删好友），对方在线就实时更新列表 */
+                MsgFriendNotify ntf{};
+                ntf.event_type = 3;
+                strncpy(ntf.from_username, client->username.c_str(), sizeof(ntf.from_username) - 1);
+                strncpy(ntf.from_nick,     client->nickname.c_str(), sizeof(ntf.from_nick)     - 1);
+                ntf.from_avatar = (uint8_t)client->avatar_idx;
+                svc_mgr->SendToUsername(target,
+                    (const uint8_t*)&ntf, sizeof(ntf), MSG_FRIEND_NOTIFY);
+
+                printf("[好友] %s 删除了好友 %s\n",
+                       client->username.c_str(), target.c_str());
+            }
+
         } else if (svc_mgr->tcp_ctrl->client_msg_recvd) {
             /* ---------- 其他业务消息（聊天/加入/离开等） ---------- */
             if (client->auth_state != TcpClient::AuthState::AUTHED) {

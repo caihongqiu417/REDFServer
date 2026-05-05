@@ -82,7 +82,7 @@ int main(int argc, char** argv)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 
-    GLFWwindow* window = glfwCreateWindow(960, 640, "REDF GameChat", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(960, 640, "Redflag Chat Client", nullptr, nullptr);
     if (!window) { glfwTerminate(); return 1; }
 
     glfwMakeContextCurrent(window);
@@ -169,12 +169,16 @@ int main(int argc, char** argv)
     int bg_w = 0, bg_h = 0;
     GLuint bg_tex = LoadTextureFromFile("Background/FF7.jpeg", &bg_w, &bg_h);
 
+    /* ---- 加载 Send 图标 ---- */
+    GLuint icon_send = LoadTextureFromFile("Icon/Send.png");
+
     /* ---- 网络 + UI 对象 ---- */
     ChatNetworkClient net;
     ChatUI            ui;
     ui.SetIcons(icon_world, icon_friend, icon_private);
     ui.SetAvatars(avatar_textures, AVATAR_COUNT);
     ui.SetBackground(bg_tex, bg_w, bg_h);
+    ui.SetSendIcon(icon_send);
 
     printf("[main] 正在连接到 %s:%u ...\n", SERVER_HOST, SERVER_PORT);
     if (!net.Connect(SERVER_HOST, SERVER_PORT))
@@ -202,7 +206,8 @@ int main(int argc, char** argv)
 
     /* ---- 清理 ---- */
     net.Disconnect();
-    if (bg_tex) glDeleteTextures(1, &bg_tex);
+    if (bg_tex)    glDeleteTextures(1, &bg_tex);
+    if (icon_send) glDeleteTextures(1, &icon_send);
     glDeleteTextures(1, &icon_world);
     glDeleteTextures(1, &icon_friend);
     glDeleteTextures(1, &icon_private);

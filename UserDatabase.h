@@ -52,6 +52,7 @@ class UserDatabase
     std::vector<MsgFriendEntry> GetFriends(const std::string& username);
     // 登录时推送：返回以我为目标的待处理申请（对方发来的、我还没处理的）
     std::vector<MsgFriendNotify> GetPendingRequests(const std::string& username);
+    void DeleteFriend(const std::string& a, const std::string& b);
 
     void Close();
 

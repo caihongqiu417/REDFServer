@@ -276,3 +276,10 @@ void ChatNetworkClient::SendFriendConfirm(const std::string& requester_username,
     cfm.accept = accept ? 1 : 0;
     SendRaw(reinterpret_cast<const uint8_t*>(&cfm), sizeof(cfm), MSG_FRIEND_CONFIRM);
 }
+
+void ChatNetworkClient::SendFriendDelete(const std::string& target_username)
+{
+    char buf[MSG_LOGIN_USERNAME_LEN] = {};
+    strncpy(buf, target_username.c_str(), sizeof(buf) - 1);
+    SendRaw(reinterpret_cast<const uint8_t*>(buf), sizeof(buf), MSG_FRIEND_DELETE);
+}

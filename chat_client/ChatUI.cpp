@@ -18,7 +18,7 @@ static const ImVec4 kGray    = {0.60f, 0.61f, 0.63f, 1.00f};  /* 次要灰  */
 /* ------------------------------------------------------------------ */
 /*  渲染单条聊天消息：系统消息直接着色；聊天消息左侧显示头像和昵称        */
 /* ------------------------------------------------------------------ */
-void ChatUI::RenderChatMsg(const ChatLine& msg)
+void ChatUI::RenderChatMsg(const ChatLine& msg, ChatNetworkClient& net)
 {
     if (msg.kind == ChatLine::Kind::SYSTEM) {
         ImGui::TextColored(kGray, "%s", msg.text.c_str());
@@ -52,16 +52,19 @@ void ChatUI::RenderChatMsg(const ChatLine& msg)
     if (msg.kind == ChatLine::Kind::OTHER && !msg.sender_username.empty()) {
         ImGui::SetCursorScreenPos(av_min);
         std::string btn_id = "##av_click_" + msg.sender_username + msg.nick;
-        if (ImGui::InvisibleButton(btn_id.c_str(), ImVec2(av_dia, av_dia))) {
-            pm_target_uname_ = msg.sender_username;
-            pm_target_nick_  = msg.nick;
-            pm_nicks_[msg.sender_username] = msg.nick;
-            if (pm_logs_.find(msg.sender_username) == pm_logs_.end())
-                pm_logs_[msg.sender_username] = {};
-            pm_unread_[msg.sender_username] = 0;
-            main_tab_ = MainTab::PRIVATE;
+        std::string ctx_id = "##av_ctx_"   + msg.sender_username + msg.nick;
+
+        ImGui::InvisibleButton(btn_id.c_str(), ImVec2(av_dia, av_dia));
+
+        /* 右键：打开主页弹窗 */
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            viewed_username_ = msg.sender_username;
+            viewed_nick_     = msg.nick;
+            viewed_avatar_   = (msg.avatar_idx >= 0 && msg.avatar_idx < avatar_count_)
+                               ? msg.avatar_idx : 0;
+            open_player_profile_ = true;
         }
-        /* 悬停时加亮边框，给用户一点点击提示 */
+
         if (ImGui::IsItemHovered())
             dl->AddCircle(av_ctr, av_r, IM_COL32(255, 255, 255, 160), 32, 2.0f);
     }
@@ -116,7 +119,13 @@ void ChatUI::Render(ChatNetworkClient& net)
         ImGui::OpenPopup("##profile_modal");
         open_profile_ = false;   /* 重置标志，防止重复打开 */
     }
-    RenderProfileModal(net);     /* 每帧都调用；弹窗关闭时内部立刻返回，几乎零开销 */
+    RenderProfileModal(net);
+
+    if (open_player_profile_) {
+        ImGui::OpenPopup("##player_profile_modal");
+        open_player_profile_ = false;
+    }
+    RenderPlayerProfileModal(net);
 
     /* 4. 根据当前状态显示不同界面 */
     if (ui_state_ == UiState::LOGIN || ui_state_ == UiState::WAITING) {
@@ -351,10 +360,15 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
                 friends_.push_back(fi);
                 friend_sent_.erase(ntf.from_username);  /* 清掉"已申请"标记 */
                 AppendMsg(std::string("[系统] ") + ntf.from_nick + " 接受了你的好友申请");
-            } else {
-                /* 对方拒绝了 */
+            } else if (ntf.event_type == 2) {
                 friend_sent_.erase(ntf.from_username);
                 AppendMsg(std::string("[系统] ") + ntf.from_nick + " 拒绝了你的好友申请");
+            } else if (ntf.event_type == 3) {
+                /* 被对方删除了，从本地好友列表移除 */
+                auto it = std::find_if(friends_.begin(), friends_.end(),
+                    [&](const FriendInfo& f){ return f.username == std::string(ntf.from_username); });
+                if (it != friends_.end()) friends_.erase(it);
+                AppendMsg(std::string("[系统] ") + ntf.from_nick + " 将你从好友列表中移除");
             }
             break;
         }
@@ -401,7 +415,7 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
         ImGui::TextColored(kGray, "昵称:");
         ImGui::SameLine();
         if (nick_buf_[0] != '\0') {
-            ImGui::TextColored(kRed, "%s", nick_buf_);
+            ImGui::TextUnformatted(nick_buf_);
         } else {
             ImGui::TextColored(kGray, "（请在主页设置昵称）");
         }
@@ -428,10 +442,21 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
             ImGui::Text(" 已连接");
         }
     } else {
-        /* 已加入：昵称用红色高亮 */
         ImGui::TextColored(kGray, "在线聊天中   昵称:");
         ImGui::SameLine();
-        ImGui::TextColored(kRed, "%s", nick_buf_);
+        ImGui::TextUnformatted(nick_buf_);
+
+        /* 调试按钮：停止/恢复心跳，测试服务端超时断线 */
+        static bool hb_stopped = false;
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
+        if (!hb_stopped) {
+            if (ImGui::SmallButton("[停心跳]")) { net.StopHeartbeat();  hb_stopped = true; }
+        } else {
+            if (ImGui::SmallButton("[恢复心跳]")) { net.StartHeartbeat(); hb_stopped = false; }
+        }
+        ImGui::PopStyleColor();
+
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 90);
 
         /* 离开世界 按钮：红底白字 */
@@ -533,7 +558,7 @@ void ChatUI::RenderChatArea(ChatNetworkClient& net)
                       ImVec2(avail_w, avail_h - input_h),
                       true);
     for (auto& msg : messages_) {
-        RenderChatMsg(msg);
+        RenderChatMsg(msg, net);
     }
     if (scroll_bottom_) {
         ImGui::SetScrollHereY(1.0f);
@@ -546,20 +571,29 @@ void ChatUI::RenderChatArea(ChatNetworkClient& net)
         ImGui::SetKeyboardFocusHere();
         focus_input_ = false;
     }
-    ImGui::SetNextItemWidth(avail_w - 74);
+    const float send_btn_sz = 34.0f;
+    ImGui::SetNextItemWidth(avail_w - send_btn_sz - 8);
     bool enter_pressed = ImGui::InputText(
         "##chatinput", chat_buf_, sizeof(chat_buf_),
         ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
+    ImGui::SameLine(0, 4);
 
     bool can_send = joined_ && net.IsConnected() && chat_buf_[0] != '\0';
 
-    /* Send 按钮：红底白字 */
-    ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
-    if ((ImGui::Button("Send") || enter_pressed) && can_send) {
-        TrySendChat(net);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+    ImGui::BeginDisabled(!can_send);
+    if (icon_send_) {
+        if ((ImGui::ImageButton("##send_world", (void*)(uintptr_t)icon_send_,
+                ImVec2(send_btn_sz - 8, send_btn_sz - 8)) || enter_pressed) && can_send)
+            TrySendChat(net);
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
+        if ((ImGui::Button("Send") || enter_pressed) && can_send)
+            TrySendChat(net);
+        ImGui::PopStyleColor();
     }
-    ImGui::PopStyleColor();
+    ImGui::EndDisabled();
+    ImGui::PopStyleVar();
 }
 
 /* ------------------------------------------------------------------ */
@@ -584,6 +618,11 @@ void ChatUI::SetBackground(unsigned int tex, int w, int h)
     bg_tex_ = tex;
     bg_w_   = w;
     bg_h_   = h;
+}
+
+void ChatUI::SetSendIcon(unsigned int tex)
+{
+    icon_send_ = tex;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1112,22 +1151,33 @@ void ChatUI::RenderPMTab(ChatNetworkClient& net)
         /* 聊天记录 */
         ImGui::BeginChild("##pm_scroll", ImVec2(chat_w, chat_h), true);
         for (auto& msg : pm_logs_[pm_target_uname_]) {
-            RenderChatMsg(msg);
+            RenderChatMsg(msg, net);
         }
         ImGui::SetScrollHereY(1.0f);
         ImGui::EndChild();
 
         /* 输入框 + Send */
         if (focus_input_) { ImGui::SetKeyboardFocusHere(); focus_input_ = false; }
-        ImGui::SetNextItemWidth(chat_w - 74);
+        const float pm_btn_sz = 34.0f;
+        ImGui::SetNextItemWidth(chat_w - pm_btn_sz - 8);
         bool enter = ImGui::InputText("##pminput", pm_buf_, sizeof(pm_buf_),
                                       ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::SameLine();
+        ImGui::SameLine(0, 4);
         bool can_send = net.IsConnected() && pm_buf_[0] != '\0';
-        ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
-        if ((ImGui::Button("Send##pm") || enter) && can_send)
-            TrySendPM(net);
-        ImGui::PopStyleColor();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+        ImGui::BeginDisabled(!can_send);
+        if (icon_send_) {
+            if ((ImGui::ImageButton("##send_pm", (void*)(uintptr_t)icon_send_,
+                    ImVec2(pm_btn_sz - 8, pm_btn_sz - 8)) || enter) && can_send)
+                TrySendPM(net);
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
+            if ((ImGui::Button("Send##pm") || enter) && can_send)
+                TrySendPM(net);
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndDisabled();
+        ImGui::PopStyleVar();
     }
 
     ImGui::EndChild();
@@ -1231,10 +1281,11 @@ void ChatUI::RenderFriendsTab(ChatNetworkClient& net)
         ImVec2 av_min = ImGui::GetCursorScreenPos();
         ImVec2 av_ctr = { av_min.x + av_r, av_min.y + av_r };
 
-        std::string btn_id = "##fav_" + f.username;
+        std::string btn_id  = "##fav_"  + f.username;
+        std::string ctx_id  = "##fctx_" + f.username;
         ImGui::InvisibleButton(btn_id.c_str(), ImVec2(av_r*2, av_r*2));
         bool hovered = ImGui::IsItemHovered();
-        if (ImGui::IsItemClicked()) {
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
             pm_target_uname_ = f.username;
             pm_target_nick_  = f.nick;
             pm_nicks_[f.username] = f.nick;
@@ -1242,6 +1293,32 @@ void ChatUI::RenderFriendsTab(ChatNetworkClient& net)
                 pm_logs_[f.username] = {};
             pm_unread_[f.username] = 0;
             main_tab_ = MainTab::PRIVATE;
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+            ImGui::OpenPopup(ctx_id.c_str());
+        if (ImGui::BeginPopup(ctx_id.c_str())) {
+            ImGui::TextColored(kGray, "%s", f.nick.c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("私聊")) {
+                pm_target_uname_ = f.username;
+                pm_target_nick_  = f.nick;
+                pm_nicks_[f.username] = f.nick;
+                if (pm_logs_.find(f.username) == pm_logs_.end())
+                    pm_logs_[f.username] = {};
+                pm_unread_[f.username] = 0;
+                main_tab_ = MainTab::PRIVATE;
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, kRedHov);
+            if (ImGui::MenuItem("删除好友")) {
+                net.SendFriendDelete(f.username);
+                friends_.erase(friends_.begin() + i);
+                ImGui::PopStyleColor();
+                ImGui::EndPopup();
+                ImGui::EndGroup();
+                break;   /* 列表已改变，退出本轮循环 */
+            }
+            ImGui::PopStyleColor();
+            ImGui::EndPopup();
         }
         if (hovered) ImGui::SetTooltip("与 %s 私聊", f.nick.c_str());
 
@@ -1284,4 +1361,110 @@ void ChatUI::TrySendPM(ChatNetworkClient& net)
 
     pm_buf_[0]   = '\0';
     focus_input_ = true;
+}
+
+/* ------------------------------------------------------------------ */
+/*  他人主页弹窗                                                        */
+/* ------------------------------------------------------------------ */
+void ChatUI::RenderPlayerProfileModal(ChatNetworkClient& net)
+{
+    ImGuiIO& io  = ImGui::GetIO();
+    ImVec2   msz = ImVec2(320.0f, 280.0f);
+
+    ImGui::SetNextWindowPos(
+        ImVec2((io.DisplaySize.x - msz.x) * 0.5f,
+               (io.DisplaySize.y - msz.y) * 0.5f),
+        ImGuiCond_Always);
+    ImGui::SetNextWindowSize(msz);
+
+    if (!ImGui::BeginPopup("##player_profile_modal",
+            ImGuiWindowFlags_NoTitleBar           |
+            ImGuiWindowFlags_NoResize             |
+            ImGuiWindowFlags_NoMove               |
+            ImGuiWindowFlags_NoScrollbar          |
+            ImGuiWindowFlags_NoScrollWithMouse))
+        return;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    /* ---- 顶部昵称居中 ---- */
+    ImGui::Spacing();
+    float title_w = ImGui::CalcTextSize(viewed_nick_.c_str()).x;
+    ImGui::SetCursorPosX((msz.x - title_w) * 0.5f);
+    ImGui::TextColored(kRed, "%s", viewed_nick_.c_str());
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    /* ---- 大头像居中 ---- */
+    const float av_r  = 44.0f;
+    float cx = msz.x * 0.5f;
+    ImGui::SetCursorPosX(cx - av_r);
+    ImVec2 av_min = ImGui::GetCursorScreenPos();
+    ImVec2 av_ctr = { av_min.x + av_r, av_min.y + av_r };
+
+    if (avatar_count_ > 0) {
+        dl->AddImageRounded(
+            (void*)(uintptr_t)avatar_textures_[viewed_avatar_],
+            av_min, ImVec2(av_min.x + av_r*2, av_min.y + av_r*2),
+            ImVec2(0,0), ImVec2(1,1), IM_COL32(255,255,255,255), av_r);
+    } else {
+        dl->AddCircleFilled(av_ctr, av_r, IM_COL32(80,80,80,200), 48);
+    }
+    dl->AddCircle(av_ctr, av_r, IM_COL32(194,13,13,180), 48, 2.0f);
+    ImGui::Dummy(ImVec2(av_r*2, av_r*2));
+
+    /* ---- 账号名居中 ---- */
+    ImGui::Spacing();
+    std::string at = "@" + viewed_username_;
+    float at_w = ImGui::CalcTextSize(at.c_str()).x;
+    ImGui::SetCursorPosX((msz.x - at_w) * 0.5f);
+    ImGui::TextColored(kGray, "%s", at.c_str());
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    /* ---- 操作按钮 ---- */
+    const float btn_w = 110.0f;
+    const float gap   = 12.0f;
+    float total = btn_w * 2 + gap;
+    ImGui::SetCursorPosX((msz.x - total) * 0.5f);
+
+    ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
+
+    if (ImGui::Button("私聊##pp", ImVec2(btn_w, 0))) {
+        pm_target_uname_ = viewed_username_;
+        pm_target_nick_  = viewed_nick_;
+        pm_nicks_[viewed_username_] = viewed_nick_;
+        if (pm_logs_.find(viewed_username_) == pm_logs_.end())
+            pm_logs_[viewed_username_] = {};
+        pm_unread_[viewed_username_] = 0;
+        main_tab_ = MainTab::PRIVATE;
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::SameLine(0, gap);
+
+    bool already = false;
+    for (auto& f : friends_)
+        if (f.username == viewed_username_) { already = true; break; }
+    bool sent = (friend_sent_.count(viewed_username_) > 0);
+
+    if (already) {
+        ImGui::BeginDisabled(true);
+        ImGui::Button("已是好友##pp", ImVec2(btn_w, 0));
+        ImGui::EndDisabled();
+    } else if (sent) {
+        ImGui::BeginDisabled(true);
+        ImGui::Button("申请已发送##pp", ImVec2(btn_w, 0));
+        ImGui::EndDisabled();
+    } else {
+        if (ImGui::Button("加好友##pp", ImVec2(btn_w, 0))) {
+            net.SendFriendReq(viewed_username_);
+            friend_sent_.insert(viewed_username_);
+        }
+    }
+
+    ImGui::PopStyleColor();
+    ImGui::EndPopup();
 }

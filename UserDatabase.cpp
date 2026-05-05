@@ -427,6 +427,19 @@ std::vector<MsgFriendEntry> UserDatabase::GetFriends(const std::string& username
     return result;
 }
 
+void UserDatabase::DeleteFriend(const std::string& a, const std::string& b)
+{
+    std::string ua, ub;
+    canon(a, b, ua, ub);
+    const char* sql = "DELETE FROM friends WHERE user_a=? AND user_b=?;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return;
+    sqlite3_bind_text(stmt, 1, ua.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, ub.c_str(), -1, SQLITE_STATIC);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 std::vector<MsgFriendNotify> UserDatabase::GetPendingRequests(const std::string& username)
 {
     std::vector<MsgFriendNotify> result;

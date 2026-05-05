@@ -55,6 +55,7 @@ typedef enum : uint16_t {
     MSG_FRIEND_NOTIFY  = 24, /* 服务器→客户端：好友通知，body = MsgFriendNotify (98B) */
     MSG_FRIEND_CONFIRM = 25, /* 客户端→服务器：接受/拒绝，body = MsgFriendConfirm (33B) */
     MSG_FRIEND_LIST    = 26, /* 服务器→客户端：好友列表，body = [uint16_t count][MsgFriendEntry×count] */
+    MSG_FRIEND_DELETE  = 27, /* 客户端→服务器：删除好友，body = target_username[32] */
 } MsgType;
 
 
