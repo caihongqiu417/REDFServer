@@ -164,6 +164,32 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
                              (const uint8_t*)&pm, sizeof(pm),
                              MSG_PM_RECV);
                 }
+
+                /* 好友列表：body = [uint16_t count BE][MsgFriendEntry × count] */
+                auto friends = svc_mgr->user_db_.GetFriends(client->username);
+                if (!friends.empty()) {
+                    std::vector<uint8_t> fl_body;
+                    uint16_t cnt = htons((uint16_t)friends.size());
+                    fl_body.push_back((uint8_t)(cnt >> 8));
+                    fl_body.push_back((uint8_t)(cnt & 0xFF));
+                    for (auto& fe : friends)
+                        fl_body.insert(fl_body.end(),
+                                       (uint8_t*)&fe, (uint8_t*)&fe + sizeof(fe));
+                    msg_send(client->comm_fd, fl_body.data(),
+                             (uint32_t)fl_body.size(), MSG_FRIEND_LIST);
+                    printf("[好友] 推送好友列表给 %s，共 %zu 人\n",
+                           client->username.c_str(), friends.size());
+                }
+
+                /* 把离线期间收到的好友申请也推过去，让客户端在好友 tab 里显示 */
+                auto reqs = svc_mgr->user_db_.GetPendingRequests(client->username);
+                for (auto& ntf : reqs) {
+                    msg_send(client->comm_fd,
+                             (const uint8_t*)&ntf, sizeof(ntf), MSG_FRIEND_NOTIFY);
+                }
+                if (!reqs.empty())
+                    printf("[好友] 推送 %zu 条待处理申请给 %s\n",
+                           reqs.size(), client->username.c_str());
             }
 
         } else if (msg_type == MSG_PROFILE_SET_REQ) {
@@ -243,6 +269,68 @@ static int process_recv(TcpClientServiceManager *svc_mgr, TcpClient *client)
                 printf("[私聊] %s → %s: \"%s\" (%s)\n",
                        client->username.c_str(), req.target_username,
                        req.text, ok ? "已投递" : "已存离线");
+            }
+
+        } else if (msg_type == MSG_FRIEND_REQ) {
+            /* ---------- 发好友申请 ---------- */
+            if (client->auth_state != TcpClient::AuthState::AUTHED ||
+                body_len < MSG_LOGIN_USERNAME_LEN) {
+            } else {
+                char target_buf[MSG_LOGIN_USERNAME_LEN] = {};
+                memcpy(target_buf, buf + MSG_HDR_SIZE,
+                       std::min((uint32_t)MSG_LOGIN_USERNAME_LEN, body_len));
+                target_buf[MSG_LOGIN_USERNAME_LEN - 1] = '\0';
+                std::string target(target_buf);
+
+                bool stored = svc_mgr->user_db_.SendFriendReq(client->username, target);
+                if (!stored) {
+                    printf("[好友] %s → %s 申请已存在或已是好友\n",
+                           client->username.c_str(), target.c_str());
+                } else {
+                    /* 实时通知对方：构造 MsgFriendNotify，event_type=0（收到申请） */
+                    MsgFriendNotify ntf{};
+                    ntf.event_type = 0;
+                    strncpy(ntf.from_username, client->username.c_str(), sizeof(ntf.from_username) - 1);
+                    strncpy(ntf.from_nick,     client->nickname.c_str(), sizeof(ntf.from_nick)     - 1);
+                    ntf.from_avatar = (uint8_t)client->avatar_idx;
+                    bool notified = svc_mgr->SendToUsername(target,
+                        (const uint8_t*)&ntf, sizeof(ntf), MSG_FRIEND_NOTIFY);
+                    printf("[好友] %s → %s 申请已存储%s\n",
+                           client->username.c_str(), target.c_str(),
+                           notified ? "" : "（对方不在线，实时通知跳过）");
+                }
+            }
+
+        } else if (msg_type == MSG_FRIEND_CONFIRM) {
+            /* ---------- 接受或拒绝好友申请 ---------- */
+            if (client->auth_state != TcpClient::AuthState::AUTHED ||
+                body_len < sizeof(MsgFriendConfirm)) {
+            } else {
+                MsgFriendConfirm cfm{};
+                memcpy(&cfm, buf + MSG_HDR_SIZE, sizeof(MsgFriendConfirm));
+                cfm.from_username[sizeof(cfm.from_username) - 1] = '\0';
+                std::string requester(cfm.from_username);
+
+                MsgFriendNotify ntf{};
+                strncpy(ntf.from_username, client->username.c_str(), sizeof(ntf.from_username) - 1);
+                strncpy(ntf.from_nick,     client->nickname.c_str(), sizeof(ntf.from_nick)     - 1);
+                ntf.from_avatar = (uint8_t)client->avatar_idx;
+
+                if (cfm.accept) {
+                    bool ok = svc_mgr->user_db_.AcceptFriend(requester, client->username);
+                    ntf.event_type = 1;  /* 对方接受了 */
+                    if (ok) svc_mgr->SendToUsername(requester,
+                                (const uint8_t*)&ntf, sizeof(ntf), MSG_FRIEND_NOTIFY);
+                    printf("[好友] %s 接受了 %s 的申请\n",
+                           client->username.c_str(), requester.c_str());
+                } else {
+                    svc_mgr->user_db_.RejectFriend(requester, client->username);
+                    ntf.event_type = 2;  /* 对方拒绝了 */
+                    svc_mgr->SendToUsername(requester,
+                        (const uint8_t*)&ntf, sizeof(ntf), MSG_FRIEND_NOTIFY);
+                    printf("[好友] %s 拒绝了 %s 的申请\n",
+                           client->username.c_str(), requester.c_str());
+                }
             }
 
         } else if (svc_mgr->tcp_ctrl->client_msg_recvd) {

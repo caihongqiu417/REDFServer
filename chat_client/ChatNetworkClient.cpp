@@ -261,3 +261,18 @@ void ChatNetworkClient::SendPMReq(const std::string& target_username, const std:
     strncpy(req.text,            text.c_str(),            sizeof(req.text)            - 1);
     SendRaw(reinterpret_cast<const uint8_t*>(&req), sizeof(req), MSG_PM_REQ);
 }
+
+void ChatNetworkClient::SendFriendReq(const std::string& target_username)
+{
+    char buf[MSG_LOGIN_USERNAME_LEN] = {};
+    strncpy(buf, target_username.c_str(), sizeof(buf) - 1);
+    SendRaw(reinterpret_cast<const uint8_t*>(buf), sizeof(buf), MSG_FRIEND_REQ);
+}
+
+void ChatNetworkClient::SendFriendConfirm(const std::string& requester_username, bool accept)
+{
+    MsgFriendConfirm cfm{};
+    strncpy(cfm.from_username, requester_username.c_str(), sizeof(cfm.from_username) - 1);
+    cfm.accept = accept ? 1 : 0;
+    SendRaw(reinterpret_cast<const uint8_t*>(&cfm), sizeof(cfm), MSG_FRIEND_CONFIRM);
+}

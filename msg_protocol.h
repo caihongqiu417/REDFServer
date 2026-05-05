@@ -48,7 +48,13 @@ typedef enum : uint16_t {
 
     /* -------- 私聊 -------- */
     MSG_PM_REQ  = 21, /* 客户端→服务器：私聊请求，body = MsgPMReq  (480B) */
-    MSG_PM_RECV = 22, /* 服务器→客户端：私聊投递，body = MsgPMRecv (545B) */
+    MSG_PM_RECV = 22, /* 服务器→客户端：私聊投递，body = MsgPMRecv (546B) */
+
+    /* -------- 好友 -------- */
+    MSG_FRIEND_REQ     = 23, /* 客户端→服务器：发好友申请，body = target_username[32] */
+    MSG_FRIEND_NOTIFY  = 24, /* 服务器→客户端：好友通知，body = MsgFriendNotify (98B) */
+    MSG_FRIEND_CONFIRM = 25, /* 客户端→服务器：接受/拒绝，body = MsgFriendConfirm (33B) */
+    MSG_FRIEND_LIST    = 26, /* 服务器→客户端：好友列表，body = [uint16_t count][MsgFriendEntry×count] */
 } MsgType;
 
 
@@ -122,6 +128,41 @@ typedef struct {
 } MsgPMRecv;
 #pragma pack(pop)
 static_assert(sizeof(MsgPMRecv) == 546, "MsgPMRecv size mismatch");
+
+/* ------------------------------------------------------------------ */
+/*  好友消息结构                                                        */
+/* ------------------------------------------------------------------ */
+
+/* 服务器→客户端：好友相关通知 (98 字节)
+ * event_type: 0=收到申请  1=对方接受  2=对方拒绝 */
+#pragma pack(push, 1)
+typedef struct {
+    uint8_t event_type;
+    char    from_username[MSG_LOGIN_USERNAME_LEN];  /* 32B */
+    char    from_nick[MSG_PROFILE_NICK_LEN];        /* 64B */
+    uint8_t from_avatar;                            /* 1B  */
+} MsgFriendNotify;
+#pragma pack(pop)
+static_assert(sizeof(MsgFriendNotify) == 98, "MsgFriendNotify size mismatch");
+
+/* 客户端→服务器：接受或拒绝申请 (33 字节) */
+#pragma pack(push, 1)
+typedef struct {
+    char    from_username[MSG_LOGIN_USERNAME_LEN];  /* 32B，申请方账号 */
+    uint8_t accept;                                 /* 1=接受  0=拒绝  */
+} MsgFriendConfirm;
+#pragma pack(pop)
+static_assert(sizeof(MsgFriendConfirm) == 33, "MsgFriendConfirm size mismatch");
+
+/* 好友列表条目，用于 MSG_FRIEND_LIST 的 body (97 字节) */
+#pragma pack(push, 1)
+typedef struct {
+    char    username[MSG_LOGIN_USERNAME_LEN];  /* 32B */
+    char    nick[MSG_PROFILE_NICK_LEN];        /* 64B */
+    uint8_t avatar_idx;                        /* 1B  */
+} MsgFriendEntry;
+#pragma pack(pop)
+static_assert(sizeof(MsgFriendEntry) == 97, "MsgFriendEntry size mismatch");
 
 
 

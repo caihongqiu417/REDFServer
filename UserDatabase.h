@@ -35,8 +35,23 @@ class UserDatabase
                          const MsgPMRecv& msg, bool is_echo = false);
 
     // 取出并删除某用户的所有离线消息，按到达顺序排列
-    // 登录成功后调用一次，把欠的消息都还给他
     std::vector<MsgPMRecv> PopOfflineMsgs(const std::string& username);
+
+    // ---- 好友关系 ----
+    // 发好友申请（已存在则忽略），返回 false 表示已经是好友或申请已存在
+    bool SendFriendReq(const std::string& from, const std::string& to);
+    // 接受申请：把 status 改为 1
+    bool AcceptFriend(const std::string& requester, const std::string& target);
+    // 拒绝/删除申请
+    void RejectFriend(const std::string& requester, const std::string& target);
+    // 是否已是好友
+    bool IsFriend(const std::string& a, const std::string& b);
+    // 是否有从 from 发往 to 的待处理申请
+    bool HasPendingReq(const std::string& from, const std::string& to);
+    // 登录时推送：返回已接受的好友列表
+    std::vector<MsgFriendEntry> GetFriends(const std::string& username);
+    // 登录时推送：返回以我为目标的待处理申请（对方发来的、我还没处理的）
+    std::vector<MsgFriendNotify> GetPendingRequests(const std::string& username);
 
     void Close();
 

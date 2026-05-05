@@ -134,19 +134,13 @@ void ChatUI::Render(ChatNetworkClient& net)
         if (main_tab_ == MainTab::WORLD) {
             RenderLoginBar(net);
             ImGui::Separator();
-            RenderPlayerList();
+            RenderPlayerList(net);
             ImGui::SameLine();
             RenderChatArea(net);
         } else if (main_tab_ == MainTab::PRIVATE) {
             RenderPMTab(net);
-        } else {
-            /* 好友功能占位 */
-            float h = ImGui::GetContentRegionAvail().y;
-            ImGui::SetCursorPosY(h * 0.45f);
-            const char* tip = "好友功能即将上线...";
-            float tw = ImGui::CalcTextSize(tip).x;
-            ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - tw) * 0.5f);
-            ImGui::TextColored(kGray, "%s", tip);
+        } else if (main_tab_ == MainTab::FRIENDS) {
+            RenderFriendsTab(net);
         }
         ImGui::EndChild();
     }
@@ -330,6 +324,67 @@ void ChatUI::HandleIncoming(ChatNetworkClient& net)
             break;
         }
 
+        /* ========================================================
+         * 好友通知（申请到达 / 对方接受 / 对方拒绝）
+         * ======================================================== */
+        case MSG_FRIEND_NOTIFY: {
+            if (m.body.size() < sizeof(MsgFriendNotify)) break;
+            MsgFriendNotify ntf{};
+            memcpy(&ntf, m.body.data(), sizeof(MsgFriendNotify));
+            ntf.from_username[sizeof(ntf.from_username) - 1] = '\0';
+            ntf.from_nick    [sizeof(ntf.from_nick)     - 1] = '\0';
+
+            if (ntf.event_type == 0) {
+                /* 收到好友申请：放进待处理列表，好友 tab 里显示 */
+                FriendRequest req;
+                req.from_username = ntf.from_username;
+                req.from_nick     = ntf.from_nick;
+                req.from_avatar   = ntf.from_avatar;
+                friend_requests_.push_back(req);
+                AppendMsg(std::string("[系统] ") + ntf.from_nick + " 申请加你为好友");
+            } else if (ntf.event_type == 1) {
+                /* 对方接受了，把他加进本地好友列表 */
+                FriendInfo fi;
+                fi.username   = ntf.from_username;
+                fi.nick       = ntf.from_nick;
+                fi.avatar_idx = ntf.from_avatar;
+                friends_.push_back(fi);
+                friend_sent_.erase(ntf.from_username);  /* 清掉"已申请"标记 */
+                AppendMsg(std::string("[系统] ") + ntf.from_nick + " 接受了你的好友申请");
+            } else {
+                /* 对方拒绝了 */
+                friend_sent_.erase(ntf.from_username);
+                AppendMsg(std::string("[系统] ") + ntf.from_nick + " 拒绝了你的好友申请");
+            }
+            break;
+        }
+
+        /* ========================================================
+         * 好友列表（登录后服务端推送）
+         * ======================================================== */
+        case MSG_FRIEND_LIST: {
+            friends_.clear();
+            if (m.body.size() < 2) break;
+            uint16_t cnt;
+            memcpy(&cnt, m.body.data(), 2);
+            cnt = ntohs(cnt);
+            size_t off = 2;
+            for (uint16_t i = 0; i < cnt; i++) {
+                if (off + sizeof(MsgFriendEntry) > m.body.size()) break;
+                MsgFriendEntry fe{};
+                memcpy(&fe, m.body.data() + off, sizeof(MsgFriendEntry));
+                off += sizeof(MsgFriendEntry);
+                fe.username[sizeof(fe.username) - 1] = '\0';
+                fe.nick    [sizeof(fe.nick)     - 1] = '\0';
+                FriendInfo fi;
+                fi.username   = fe.username;
+                fi.nick       = fe.nick;
+                fi.avatar_idx = fe.avatar_idx;
+                friends_.push_back(fi);
+            }
+            break;
+        }
+
         default:
             break;
         }
@@ -396,7 +451,7 @@ void ChatUI::RenderLoginBar(ChatNetworkClient& net)
 /* ------------------------------------------------------------------ */
 /*  左栏：在线玩家列表                                                  */
 /* ------------------------------------------------------------------ */
-void ChatUI::RenderPlayerList()
+void ChatUI::RenderPlayerList(ChatNetworkClient& net)
 {
     float avail_h = ImGui::GetContentRegionAvail().y;
     ImGui::BeginChild("##playerlist", ImVec2(158, avail_h), true);
@@ -438,6 +493,23 @@ void ChatUI::RenderPlayerList()
                         pm_logs_[p.username] = {};
                     pm_unread_[p.username] = 0;
                     main_tab_ = MainTab::PRIVATE;
+                }
+
+                /* 判断好友状态：已是好友 / 已申请 / 可添加 */
+                bool already = false;
+                for (auto& f : friends_)
+                    if (f.username == p.username) { already = true; break; }
+                bool sent = (friend_sent_.count(p.username) > 0);
+
+                if (already) {
+                    ImGui::TextDisabled("已是好友");
+                } else if (sent) {
+                    ImGui::TextDisabled("申请已发送");
+                } else {
+                    if (ImGui::MenuItem("加好友")) {
+                        net.SendFriendReq(p.username);
+                        friend_sent_.insert(p.username);
+                    }
                 }
                 ImGui::EndPopup();
             }
@@ -577,6 +649,13 @@ void ChatUI::RenderNavSidebar()
             int total_unread = 0;
             for (auto& kv : pm_unread_) total_unread += kv.second;
             if (total_unread > 0) {
+                ImVec2 dot = { center.x + radius * 0.6f, center.y - radius * 0.6f };
+                dl->AddCircleFilled(dot, 5.0f, IM_COL32(220, 30, 30, 255), 16);
+            }
+        }
+
+        if (t.tab == MainTab::FRIENDS && main_tab_ != MainTab::FRIENDS) {
+            if (!friend_requests_.empty()) {
                 ImVec2 dot = { center.x + radius * 0.6f, center.y - radius * 0.6f };
                 dl->AddCircleFilled(dot, 5.0f, IM_COL32(220, 30, 30, 255), 16);
             }
@@ -1052,6 +1131,142 @@ void ChatUI::RenderPMTab(ChatNetworkClient& net)
     }
 
     ImGui::EndChild();
+}
+
+/* ------------------------------------------------------------------ */
+/*  好友 Tab                                                           */
+/* ------------------------------------------------------------------ */
+void ChatUI::RenderFriendsTab(ChatNetworkClient& net)
+{
+    float avail_h = ImGui::GetContentRegionAvail().y;
+    float avail_w = ImGui::GetContentRegionAvail().x;
+
+    /* ---- 待处理申请 ---- */
+    if (!friend_requests_.empty()) {
+        ImGui::TextColored(kRed, "待处理申请");
+        ImGui::Separator();
+
+        int remove_idx = -1;
+        for (int i = 0; i < (int)friend_requests_.size(); i++) {
+            auto& req = friend_requests_[i];
+            const float av_r = 14.0f;
+
+            /* 头像 */
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 av_min  = ImGui::GetCursorScreenPos();
+            ImVec2 av_ctr  = { av_min.x + av_r, av_min.y + av_r };
+            int aidx = (req.from_avatar < avatar_count_) ? req.from_avatar : 0;
+            if (avatar_count_ > 0) {
+                dl->AddImageRounded(
+                    (void*)(uintptr_t)avatar_textures_[aidx],
+                    av_min, ImVec2(av_min.x + av_r*2, av_min.y + av_r*2),
+                    ImVec2(0,0), ImVec2(1,1), IM_COL32(255,255,255,255), av_r);
+            } else {
+                dl->AddCircleFilled(av_ctr, av_r, IM_COL32(100,100,100,200), 32);
+            }
+            ImGui::Dummy(ImVec2(av_r*2 + 6, av_r*2));
+            ImGui::SameLine(0, 0);
+
+            /* 昵称 + 接受/拒绝 */
+            ImGui::BeginGroup();
+            ImGui::TextUnformatted(req.from_nick.c_str());
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
+            std::string acc_id = "接受##" + req.from_username;
+            std::string rej_id = "拒绝##" + req.from_username;
+            if (ImGui::SmallButton(acc_id.c_str())) {
+                net.SendFriendConfirm(req.from_username, true);
+                /* 乐观更新：先加入本地好友列表，等服务端广播确认 */
+                FriendInfo fi;
+                fi.username   = req.from_username;
+                fi.nick       = req.from_nick;
+                fi.avatar_idx = req.from_avatar;
+                friends_.push_back(fi);
+                remove_idx = i;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(rej_id.c_str())) {
+                net.SendFriendConfirm(req.from_username, false);
+                remove_idx = i;
+            }
+            ImGui::PopStyleColor();
+            ImGui::EndGroup();
+            ImGui::Spacing();
+        }
+        if (remove_idx >= 0)
+            friend_requests_.erase(friend_requests_.begin() + remove_idx);
+
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
+
+    /* ---- 好友列表 ---- */
+    ImGui::TextColored(kRed, "好友");
+    ImGui::SameLine();
+    ImGui::TextColored(kGray, "(%zu)", friends_.size());
+    ImGui::Separator();
+
+    if (friends_.empty()) {
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + avail_h * 0.3f);
+        const char* tip = "还没有好友，去世界频道认识新朋友吧";
+        ImGui::SetCursorPosX((avail_w - ImGui::CalcTextSize(tip).x) * 0.5f);
+        ImGui::TextColored(kGray, "%s", tip);
+        return;
+    }
+
+    /* 网格布局：每行按头像大小自动换行 */
+    const float cell_w = 72.0f;
+    int per_row = std::max(1, (int)(avail_w / cell_w));
+
+    for (int i = 0; i < (int)friends_.size(); i++) {
+        auto& f = friends_[i];
+        if (i % per_row != 0) ImGui::SameLine();
+
+        ImGui::BeginGroup();
+
+        /* 圆形头像，可点击打开私聊 */
+        const float av_r  = 24.0f;
+        float cell_cx = cell_w * 0.5f;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cell_cx - av_r);
+        ImVec2 av_min = ImGui::GetCursorScreenPos();
+        ImVec2 av_ctr = { av_min.x + av_r, av_min.y + av_r };
+
+        std::string btn_id = "##fav_" + f.username;
+        ImGui::InvisibleButton(btn_id.c_str(), ImVec2(av_r*2, av_r*2));
+        bool hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked()) {
+            pm_target_uname_ = f.username;
+            pm_target_nick_  = f.nick;
+            pm_nicks_[f.username] = f.nick;
+            if (pm_logs_.find(f.username) == pm_logs_.end())
+                pm_logs_[f.username] = {};
+            pm_unread_[f.username] = 0;
+            main_tab_ = MainTab::PRIVATE;
+        }
+        if (hovered) ImGui::SetTooltip("与 %s 私聊", f.nick.c_str());
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        int aidx = (f.avatar_idx >= 0 && f.avatar_idx < avatar_count_) ? f.avatar_idx : 0;
+        if (avatar_count_ > 0) {
+            dl->AddImageRounded(
+                (void*)(uintptr_t)avatar_textures_[aidx],
+                av_min, ImVec2(av_min.x + av_r*2, av_min.y + av_r*2),
+                ImVec2(0,0), ImVec2(1,1), IM_COL32(255,255,255,255), av_r);
+        } else {
+            dl->AddCircleFilled(av_ctr, av_r, IM_COL32(100,100,100,200), 32);
+        }
+        ImU32 ring = hovered ? IM_COL32(220,50,50,220) : IM_COL32(150,150,150,120);
+        dl->AddCircle(av_ctr, av_r, ring, 32, hovered ? 2.0f : 1.5f);
+
+        /* 昵称居中截断显示 */
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX());
+        float tw = ImGui::CalcTextSize(f.nick.c_str()).x;
+        float off = (cell_w - tw) * 0.5f;
+        if (off > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off);
+        ImGui::TextUnformatted(f.nick.c_str());
+
+        ImGui::EndGroup();
+    }
 }
 
 void ChatUI::TrySendPM(ChatNetworkClient& net)

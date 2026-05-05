@@ -83,6 +83,20 @@ bool UserDatabase::Open(const std::string& db_path)
         "ON offline_msgs (target_username, id);",
         nullptr, nullptr, nullptr);
 
+    /* friends：好友关系表，单行存储（user_a < user_b 字典序）。
+     * requester 记录谁主动发的申请，status=0 待确认，status=1 已是好友。
+     * 用 requester 字段而不是 user_a/user_b 来表示方向，
+     * 这样无论字典序怎么排，都能准确找到"我收到的待处理申请"。*/
+    sqlite3_exec(db_,
+        "CREATE TABLE IF NOT EXISTS friends ("
+        "  user_a    TEXT NOT NULL,"
+        "  user_b    TEXT NOT NULL,"
+        "  status    INTEGER NOT NULL DEFAULT 0,"
+        "  requester TEXT NOT NULL,"
+        "  PRIMARY KEY (user_a, user_b)"
+        ");",
+        nullptr, nullptr, nullptr);
+
     fprintf(stdout, "[UserDB] 数据库已就绪: %s\n", db_path.c_str());
     return true;
 }
@@ -278,5 +292,172 @@ std::vector<MsgPMRecv> UserDatabase::PopOfflineMsgs(const std::string& username)
     }
 
     printf("[UserDB] 向 %s 投递 %zu 条离线消息\n", username.c_str(), result.size());
+    return result;
+}
+
+/* ------------------------------------------------------------------ */
+/*  好友关系                                                            */
+/* ------------------------------------------------------------------ */
+
+/* 把两个账号名规范化为字典序：user_a < user_b */
+static void canon(const std::string& a, const std::string& b,
+                  std::string& out_a, std::string& out_b)
+{
+    if (a < b) { out_a = a; out_b = b; }
+    else        { out_a = b; out_b = a; }
+}
+
+bool UserDatabase::SendFriendReq(const std::string& from, const std::string& to)
+{
+    if (IsFriend(from, to)) return false;     /* 已经是好友，不重复申请 */
+    if (HasPendingReq(from, to)) return false; /* 已发过申请 */
+
+    std::string ua, ub;
+    canon(from, to, ua, ub);
+
+    /* INSERT OR IGNORE：如果对方已经发了申请（行已存在），就不覆盖 */
+    const char* sql =
+        "INSERT OR IGNORE INTO friends (user_a, user_b, status, requester) "
+        "VALUES (?, ?, 0, ?);";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, ua.c_str(),   -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, ub.c_str(),   -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, from.c_str(), -1, SQLITE_STATIC);
+    bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+bool UserDatabase::AcceptFriend(const std::string& requester, const std::string& target)
+{
+    std::string ua, ub;
+    canon(requester, target, ua, ub);
+
+    const char* sql =
+        "UPDATE friends SET status = 1 "
+        "WHERE user_a = ? AND user_b = ? AND requester = ? AND status = 0;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, ua.c_str(),        -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, ub.c_str(),        -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, requester.c_str(), -1, SQLITE_STATIC);
+    sqlite3_step(stmt);
+    bool ok = (sqlite3_changes(db_) > 0);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+void UserDatabase::RejectFriend(const std::string& requester, const std::string& target)
+{
+    std::string ua, ub;
+    canon(requester, target, ua, ub);
+
+    const char* sql =
+        "DELETE FROM friends WHERE user_a=? AND user_b=? AND requester=? AND status=0;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return;
+    sqlite3_bind_text(stmt, 1, ua.c_str(),        -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, ub.c_str(),        -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, requester.c_str(), -1, SQLITE_STATIC);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
+bool UserDatabase::IsFriend(const std::string& a, const std::string& b)
+{
+    std::string ua, ub;
+    canon(a, b, ua, ub);
+    const char* sql =
+        "SELECT 1 FROM friends WHERE user_a=? AND user_b=? AND status=1;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, ua.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, ub.c_str(), -1, SQLITE_STATIC);
+    bool found = (sqlite3_step(stmt) == SQLITE_ROW);
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+bool UserDatabase::HasPendingReq(const std::string& from, const std::string& to)
+{
+    std::string ua, ub;
+    canon(from, to, ua, ub);
+    const char* sql =
+        "SELECT 1 FROM friends WHERE user_a=? AND user_b=? AND requester=? AND status=0;";
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, ua.c_str(),   -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, ub.c_str(),   -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, from.c_str(), -1, SQLITE_STATIC);
+    bool found = (sqlite3_step(stmt) == SQLITE_ROW);
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+std::vector<MsgFriendEntry> UserDatabase::GetFriends(const std::string& username)
+{
+    std::vector<MsgFriendEntry> result;
+
+    /* 找出所有 status=1 的行，取另一方的账号名，再 JOIN users 表拿昵称和头像 */
+    const char* sql =
+        "SELECT u.username, u.nickname, u.avatar_idx "
+        "FROM friends f "
+        "JOIN users u ON u.username = CASE WHEN f.user_a=? THEN f.user_b ELSE f.user_a END "
+        "WHERE (f.user_a=? OR f.user_b=?) AND f.status=1;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return result;
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, username.c_str(), -1, SQLITE_STATIC);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        MsgFriendEntry e{};
+        auto col = [&](int c) -> const char* {
+            const unsigned char* p = sqlite3_column_text(stmt, c);
+            return p ? reinterpret_cast<const char*>(p) : "";
+        };
+        strncpy(e.username,  col(0), sizeof(e.username)  - 1);
+        strncpy(e.nick,      col(1), sizeof(e.nick)      - 1);
+        e.avatar_idx = (uint8_t)sqlite3_column_int(stmt, 2);
+        result.push_back(e);
+    }
+    sqlite3_finalize(stmt);
+    return result;
+}
+
+std::vector<MsgFriendNotify> UserDatabase::GetPendingRequests(const std::string& username)
+{
+    std::vector<MsgFriendNotify> result;
+
+    /* 找出所有以 username 为目标、还没处理的申请，JOIN users 取申请方的昵称和头像 */
+    const char* sql =
+        "SELECT f.requester, u.nickname, u.avatar_idx "
+        "FROM friends f "
+        "JOIN users u ON u.username = f.requester "
+        "WHERE (f.user_a=? OR f.user_b=?) "
+        "  AND f.requester != ? "
+        "  AND f.status = 0;";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return result;
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, username.c_str(), -1, SQLITE_STATIC);
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        MsgFriendNotify ntf{};
+        ntf.event_type = 0;   /* 收到申请 */
+        auto col = [&](int c) -> const char* {
+            const unsigned char* p = sqlite3_column_text(stmt, c);
+            return p ? reinterpret_cast<const char*>(p) : "";
+        };
+        strncpy(ntf.from_username, col(0), sizeof(ntf.from_username) - 1);
+        strncpy(ntf.from_nick,     col(1), sizeof(ntf.from_nick)     - 1);
+        ntf.from_avatar = (uint8_t)sqlite3_column_int(stmt, 2);
+        result.push_back(ntf);
+    }
+    sqlite3_finalize(stmt);
     return result;
 }

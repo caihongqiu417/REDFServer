@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <cstdint>
 #include "ChatNetworkClient.h"
 
@@ -16,6 +17,18 @@ struct ChatLine {
 struct PlayerInfo {
     std::string username;
     std::string nick;
+};
+
+struct FriendInfo {
+    std::string username;
+    std::string nick;
+    int avatar_idx = 0;
+};
+
+struct FriendRequest {
+    std::string from_username;
+    std::string from_nick;
+    int from_avatar = 0;
 };
 
 class ChatUI {
@@ -95,6 +108,11 @@ private:
     std::map<std::string, int>                   pm_unread_;
     char pm_buf_[512] = {};
 
+    /* 好友状态 */
+    std::vector<FriendInfo>    friends_;          // 已接受的好友列表
+    std::vector<FriendRequest> friend_requests_;  // 收到的待处理申请
+    std::set<std::string>      friend_sent_;      // 本次登录已发出申请的账号名（避免重复点击）
+
     /* ================================================================
      * 渲染子函数
      * ================================================================ */
@@ -102,7 +120,7 @@ private:
     void HandleIncoming(ChatNetworkClient& net);
     void RenderNavSidebar();                        // 左侧竖向图标导航栏
     void RenderLoginBar(ChatNetworkClient& net);
-    void RenderPlayerList();
+    void RenderPlayerList(ChatNetworkClient& net);
     void RenderChatArea(ChatNetworkClient& net);
     void RenderProfileModal(ChatNetworkClient& net); // 主页弹窗（头像选择 + 昵称修改）
 
@@ -117,4 +135,5 @@ private:
     void TrySendChat(ChatNetworkClient& net);
     void TrySendPM(ChatNetworkClient& net);
     void RenderPMTab(ChatNetworkClient& net);
+    void RenderFriendsTab(ChatNetworkClient& net);
 };

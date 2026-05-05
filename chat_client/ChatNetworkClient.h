@@ -38,6 +38,10 @@ public:
     /* 发送私聊消息 */
     void SendPMReq(const std::string& target_username, const std::string& text);
 
+    /* 好友相关 */
+    void SendFriendReq(const std::string& target_username);
+    void SendFriendConfirm(const std::string& requester_username, bool accept);
+
 
     /* 从主线程调用：取走所有待处理的消息 */
     std::vector<ChatMsg> Poll();
